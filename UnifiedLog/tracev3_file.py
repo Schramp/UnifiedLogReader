@@ -154,6 +154,10 @@ class TraceV3(data_format.BinaryDataFormat):
         locationServicesEnabledStatus, locationRestricted = struct.unpack('<ii', data[0:8])
         return str( {"locationServicesEnabledStatus":locationServicesEnabledStatus, "locationRestricted":True if locationRestricted else False} )
 
+    def _Read_CMMotionCoprocessorReply_Log(self, data):
+        print(data.hex())
+        return str( {"CMMotionCoprocessorReply_Log": data.hex() } )
+
     # _CLLocationManagerStateTrackerState
     # https://github.com/nst/iOS-Runtime-Headers/blob/fbb634c78269b0169efdead80955ba64eaaa2f21/Frameworks/CoreLocation.framework/CLLocationManagerStateTracker.h
 
@@ -1351,6 +1355,10 @@ class TraceV3(data_format.BinaryDataFormat):
                     #     msg += Read_CLDaemonStatusStateTrackerState(raw_data)
                     elif custom_specifier.find('_CLClientManagerStateTrackerState') > 0:
                         msg += self._Read_CLClientManagerStateTrackerState(raw_data)
+                    elif custom_specifier.find('CMMotionCoprocessorReply_Log') > 0:
+                        logger.info("Unknown custom data object type '{}' data size=0x{:X} in log @ 0x{:X}".format(custom_specifier, len(raw_data), log_file_pos))
+                        msg += self._Read_CMMotionCoprocessorReply_Log(raw_data)
+                        msg += hit.group(0)
                     else:
                         msg += hit.group(0)
                         logger.info("Unknown custom data object type '{}' data size=0x{:X} in log @ 0x{:X}".format(custom_specifier, len(raw_data), log_file_pos))
