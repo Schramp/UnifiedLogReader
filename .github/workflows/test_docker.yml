@@ -69,7 +69,7 @@ jobs:
         LANG: C.utf8
       run: |
         python3 setup.py install
-     - name: Run tests
+    - name: Run tests
       env:
         LANG: en_US.UTF-8
       run: |
