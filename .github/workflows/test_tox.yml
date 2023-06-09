@@ -5,8 +5,8 @@ on:
     branches:
     - main
   push:
-    branches:
-    - main
+#    branches:
+#    - main
 permissions: read-all
 jobs:
   build:
