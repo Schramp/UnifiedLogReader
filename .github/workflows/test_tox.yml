@@ -41,6 +41,7 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         add-apt-repository -y universe
+        add-apt-repository -y ppa:deadsnakes/ppa
         apt-get update -q
         apt-get install -y build-essential git python${{ matrix.python-version }} python${{ matrix.python-version }}-dev python${{ matrix.python-version }}-venv python3-pip python3-setuptools
     - name: Install tox
@@ -80,6 +81,7 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         add-apt-repository -y universe
+        add-apt-repository -y ppa:deadsnakes/ppa
         apt-get update -q
         apt-get install -y build-essential git python${{ matrix.python-version }} python${{ matrix.python-version }}-dev python${{ matrix.python-version }}-venv python3-pip python3-setuptools
     - name: Install tox
@@ -121,6 +123,7 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         add-apt-repository -y universe
+        add-apt-repository -y ppa:deadsnakes/ppa
         apt-get update -q
         apt-get install -y build-essential git python${{ matrix.python-version }} python${{ matrix.python-version }}-dev python${{ matrix.python-version }}-venv python3-distutils python3-dtfabric python3-lz4 python3-pip python3-setuptools
     - name: Install tox
