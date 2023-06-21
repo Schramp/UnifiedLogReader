@@ -297,11 +297,11 @@ class FileOutputWriter(object):
 
                 else:
                     msg_parts = []
-                    if log_entry.signpost_name:
+                    if log_entry.signpost_string:
                         msg_parts.append('[{0:s}]'.format(
                             log_entry.signpost_string))
 
-                    msg_parts.append('{0:s} '.format(log_entry.p_name))
+                    msg_parts.append('{0:s}: '.format(log_entry.p_name))
                     if log_entry.lib:
                       msg_parts.append('({0:s}) '.format(log_entry.lib))
 
@@ -312,11 +312,15 @@ class FileOutputWriter(object):
                     msg_parts.append('{0:s} '.format(log_entry.log_msg))
 
                     msg = ''.join(msg_parts)
+                    if False: #Use the exact format as "log show" on Mac OSx
+                        timestring = time_value.astimezone().strftime('%Y-%m-%d %H:%M:%S.%f%z')
+                    else: # Use the timestamp in UTC
+                        timestring = str(time_value)
 
                     self._file_object.write((
                         u'{time:<26} {li.thread:<#10x} {li.log_type:<11} {li.act_id:<#20x} '
                         u'{li.pid:<6} {li.ttl:<4} {message}\n').format(
-                            li=log_entry, time=str(time_value), message=msg.replace('\n',',')))
+                            li=log_entry, time=timestring, message=msg.replace('\n',',').strip("\n ,\t")))
 
             except (IOError, OSError):
                 logger.exception('Error writing to output file')
