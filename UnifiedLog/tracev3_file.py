@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 '''The tracev3 file parser.'''
-
+import base64
 import binascii
 import lz4.block
 import ipaddress
@@ -1201,7 +1201,7 @@ class TraceV3(data_format.BinaryDataFormat):
                 data.append([item_type, item_size, buffer[pos:pos+item_size]])
             elif item_type == 2: # %p (printed as hex with 0x prefix)
                 data.append([item_type, item_size, buffer[pos:pos+item_size]])
-            elif item_type in (0x20, 0x21, 0x22, 0x40, 0x41, 0x42, 0x31, 0x32): # string descriptor 0x22={public}%s 0x4x shows as %@ (if size=0, then '(null)')
+            elif item_type in (0x20, 0x21, 0x22, 0x25, 0x40, 0x41, 0x42, 0x45, 0x31, 0x32, 0xF2): # string descriptor 0x22={public}%s 0x4x shows as %@ (if size=0, then '(null)')
                 # byte 0xAB A=type(0=num,1=len??,2=string in stringsbuf,4=object)  B=style (0=normal,1=private,2={public})
                 # 0x3- is for %.*P object types
                 offset, size = struct.unpack('<HH', buffer[pos:pos+4])
@@ -1298,6 +1298,8 @@ class TraceV3(data_format.BinaryDataFormat):
                 data_type = data_item[0]
                 data_size = data_item[1]
                 raw_data  = data_item[2]
+                if custom_specifier and custom_specifier.find('mask.hash')>0:
+                    raw_data = b"< mask.hash: '" + base64.b64encode(raw_data) + b"' >"
                 if (specifier not in ('p', 'P', 's', 'S')) and (flags_width_precision.find('*') >= 0): # Width and/or precision is now a variable!
                     logger.debug('Found * , data_type is {}, exp={} for log @ 0x{:X}'.format(data_type, flags_width_precision + specifier, log_file_pos))
                     var_count = flags_width_precision.count('*')
@@ -1436,6 +1438,8 @@ class TraceV3(data_format.BinaryDataFormat):
                     #     msg += Read_CLDaemonStatusStateTrackerState(raw_data)
                     elif custom_specifier.find('_CLClientManagerStateTrackerState') > 0:
                         msg += self._Read_CLClientManagerStateTrackerState(raw_data)
+                    elif custom_specifier.find('mask.hash')>0 :
+                        msg += raw_data.decode('utf8').rstrip('\x00')
                     else:
                         msg += hit.group(0)
                         logger.info("Unknown custom data object type '{}' data size=0x{:X} in log @ 0x{:X}".format(custom_specifier, len(raw_data), log_file_pos))
