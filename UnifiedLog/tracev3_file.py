@@ -1104,7 +1104,10 @@ class TraceV3(data_format.BinaryDataFormat):
             pos = pos + 4
             message_string_size, = struct.unpack("I", chunk_data[pos:pos + 4])
             pos = pos + 4
-            subsystem_string = self._ReadCString(chunk_data[pos:pos+subsystem_string_size])
+            if subsystem_string_size:
+                subsystem_string = self._ReadCString(chunk_data[pos:pos+subsystem_string_size])
+            else:
+                subsystem_string = None
             pos = pos + subsystem_string_size
             log_msg = self._ReadCString(chunk_data[pos:pos+message_string_size])
 
