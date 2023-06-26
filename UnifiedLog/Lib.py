@@ -35,6 +35,7 @@
 
 import binascii
 import datetime
+
 import os
 import struct
 from uuid import UUID
@@ -57,7 +58,7 @@ def ReadAPFSTime(mac_apfs_time): # Mac APFS timestamp is nano second time epoch 
         try:
             if type(mac_apfs_time) == str:
                 mac_apfs_time = float(mac_apfs_time)
-            return datetime.datetime(1970, 1, 1) + datetime.timedelta(microseconds=mac_apfs_time/1000.)
+            return datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc) + datetime.timedelta(microseconds=mac_apfs_time/1000.)
 
         except (ImportError, NameError, UnboundLocalError):
             raise

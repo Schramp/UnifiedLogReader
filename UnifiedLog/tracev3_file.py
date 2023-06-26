@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 '''The tracev3 file parser.'''
-
+import base64
 import binascii
 import lz4.block
 import ipaddress
@@ -23,6 +23,7 @@ class TraceV3(data_format.BinaryDataFormat):
     _CHUNK_TAG_FIREHOSE = 0x6001
     _CHUNK_TAG_OVERSIZE = 0x6002
     _CHUNK_TAG_STATE = 0x6003
+    _CHUNK_TAG_SIMPLEDUMP = 0x6004
 
     _TRACEPOINT_FLAG_HAS_ACTIVITY_ID = 0x0001
     _TRACEPOINT_FLAG_HAS_UNIQUE_PID = 0x0010
@@ -54,15 +55,15 @@ class TraceV3(data_format.BinaryDataFormat):
         # Header info
         #self.header_unknown = 0
         self.header_data_length = 0   # 0xD0 Length of remaining header
-        self.header_unknown1 = 0 # 1
-        self.header_unknown2 = 0 # 1
+        self.header_numerator = 0 # 1
+        self.header_denominator = 0 # 1
         self.header_continuousTime = 0
         self.header_item_continuousTime = 0
         self.header_timestamp = 0 # HFS time 4 bytes
         self.header_unknown5 = 0 # 0
         self.header_unknown6 = 0
-        self.header_bias_in_seconds = 0
-        self.header_unknown8 = 0
+        self.header_timezone_offset_minutes = 0
+        self.header_daylight_saving = 0
         self.header_unknown9 = 0
         self.ts_list = ts_list
         self.cached_files = cached_files
@@ -227,10 +228,10 @@ class TraceV3(data_format.BinaryDataFormat):
         '''
         file_header_data_size = len(file_header_data)
 
-        (self.header_unknown1, self.header_unknown2, self.header_continuousTime,
+        (self.header_numerator, self.header_denominator, self.header_continuousTime,
          self.header_timestamp, self.header_unknown5, self.header_unknown6,
-         self.header_bias_in_seconds, self.header_unknown8,
-         self.header_unknown9) = struct.unpack(
+         self.header_timezone_offset_minutes, self.header_daylight_saving,
+         self.header_flags) = struct.unpack(
              "<IIQiIIiII", file_header_data[:40])
 
         self.header_data_length = len(file_header_data)
@@ -246,13 +247,20 @@ class TraceV3(data_format.BinaryDataFormat):
                 self.header_item_continuousTime = struct.unpack("<Q", value_data)[0]
 
             elif item_id == 0x6101: # machine hostname & model
+                value_data = file_header_data[pos:pos + item_length]
+                unknown1, unknown2 = struct.unpack("II", value_data[:8])
+                self.header_build, self.header_hardware = struct.unpack("16s32s", value_data[8:])
+
                 pass
 
             elif item_id == 0x6102: # uuid
                 value_data = file_header_data[pos:pos+16]
                 self.system_boot_uuid = UUID(bytes=value_data)
+                self.header_logd_pid, self.header_exitstatus = struct.unpack("II",file_header_data[pos + 16:pos + item_length])
 
             elif item_id == 0x6103: # timezone string
+                value_data = file_header_data[pos:pos + item_length]
+                self.header_timezone_string = struct.unpack("48s",value_data)
                 pass
 
             else:                   # not yet seen item
@@ -451,8 +459,7 @@ class TraceV3(data_format.BinaryDataFormat):
         # processing
         #logger.debug('log_file_pos=0x{:X}'.format(log_file_pos))
 
-        ts = self._FindClosestTimesyncItemInList(self.boot_uuid_ts_list, ct)
-        time = ts.time_stamp + (ct - ts.continuousTime) * (1.0*ts.ts_numerator)/ts.ts_denominator
+        time = self.time_from_continuoustime(ct)
         #logger.debug("Type 6001 LOG timestamp={}".format(self._ReadAPFSTime(time)))
 
         try: # Big Exception block for any log uncaught exception
@@ -902,8 +909,8 @@ class TraceV3(data_format.BinaryDataFormat):
             msg = 'lost {}{} unreliable messages from {} - {}  (exact start-approx. end)'
             sign, end_ct_rel, count = struct.unpack('<IQI', buffer[0:16])
             end_ct = ct_base + end_ct_rel
-            end_time = ts.time_stamp + (end_ct - ts.continuousTime)*(1.0*ts.ts_numerator)/ts.ts_denominator
-            start_time = ts.time_stamp + (start_ct - ts.continuousTime)*(1.0*ts.ts_numerator)/ts.ts_denominator
+            end_time = self.time_from_continuoustime(end_ct, ts)
+            start_time = self.time_from_continuoustime(start_ct, ts)
             if sign == 1:
                 sign == '>='
             elif sign == 4:
@@ -920,7 +927,7 @@ class TraceV3(data_format.BinaryDataFormat):
     def _ParseOversizeChunkData(self, chunk_data, log_file_pos):
         '''Parses oversize chunk data.
 
-        The oversize chunk is a chunk with tag 0x6001.
+        The oversize chunk is a chunk with tag 0x6002.
 
         Args:
           chunk_data (bytes): oversize chunk data.
@@ -935,14 +942,13 @@ class TraceV3(data_format.BinaryDataFormat):
         self.large_data[large_data_key] = chunk_data[32:data_end_offset]
 
         ## Debug print
-        ts = self._FindClosestTimesyncItemInList(self.boot_uuid_ts_list, ct)
-        time = ts.time_stamp + (ct - ts.continuousTime)*(1.0*ts.ts_numerator)/ts.ts_denominator
+        time = self.time_from_continuoustime(ct)
         logger.debug("Type 6002 timestamp={} ({}), data_ref_id=0x{:X} @ 0x{:X}".format(self._ReadAPFSTime(time), ct, data_ref_id, log_file_pos))
 
     def _ParseStateChunkData(self, chunk_data, catalog, proc_info, logs, log_file_pos):
         '''Parses state chunk data.
 
-        The state chunk is a chunk with tag 0x6001.
+        The state chunk is a chunk with tag 0x6003.
 
         Args:
           chunk_data (bytes): state chunk data.
@@ -1006,8 +1012,8 @@ class TraceV3(data_format.BinaryDataFormat):
             imageUUID = uuid
             processImageUUID = ut_cache.Uuid
 
-            ts = self._FindClosestTimesyncItemInList(self.boot_uuid_ts_list, ct)
-            time = ts.time_stamp + (ct - ts.continuousTime) *(1.0*ts.ts_numerator)/ts.ts_denominator
+
+            time = self.time_from_continuoustime(ct)
             #logger.debug("Type 6003 timestamp={}".format(self._ReadAPFSTime(time)))
 
             log_entry = resources.LogEntry(
@@ -1024,6 +1030,79 @@ class TraceV3(data_format.BinaryDataFormat):
         # TODO: refactor wide exception.
         except Exception as ex:
             logger.exception("Exception while processing logtype 'State' @ 0x{:X} ct={}, skipping that log entry!".format(log_file_pos, ct))
+
+        self._debug_log_count += 1
+
+    def time_from_continuoustime(self, ct, ts=None):
+        if not ts:
+            ts = self._FindClosestTimesyncItemInList(self.boot_uuid_ts_list, ct)
+        return ts.time_stamp + (ct - ts.continuousTime) * (1.0 * ts.ts_numerator) / ts.ts_denominator
+
+    def _ParseSimpleDumpData(self, chunk_data, catalog, proc_info, logs, log_file_pos):
+        '''Parses state chunk data.
+
+        The state chunk is a chunk with tag 0x6004.
+
+        Args:
+          chunk_data (bytes): state chunk data.
+          catalog (Catalog): catalog.
+          proc_info (ProcInfo): process information.
+          logs (list[LogEntry]): log entries.
+
+        Raises:
+          struct.error: if the state chunk data cannot be parsed.
+        '''
+        try:
+            log_type = 'Default'
+            pos = 0
+            proc_id1, proc_id2, ttl,\
+                log_type2, unk1 = struct.unpack('<QIbbh', chunk_data[pos:pos + 16])
+            pos = pos + 16
+            ct, = struct.unpack("<Q", chunk_data[pos:pos+8])
+            time = self.time_from_continuoustime(ct)
+            pos = pos + 8
+            Thread_identifier,\
+                Load_address_or_offset = struct.unpack("<QQ", chunk_data[pos:pos+16])
+            pos = pos + 16
+            sender_image_id,\
+                shared_Cache_strings= struct.unpack("16s16s", chunk_data[pos:pos+32])
+            sender_image_id = UUID(bytes=sender_image_id)
+            shared_Cache_strings = UUID(bytes=shared_Cache_strings)
+            pos = pos + 32
+            # Unknown (number of message strings?) observed value: 0x1
+            unknown2 = struct.unpack("I", chunk_data[pos:pos + 4])
+            pos = pos + 4
+            subsystem_string_size, = struct.unpack("I", chunk_data[pos:pos + 4])
+            pos = pos + 4
+            message_string_size, = struct.unpack("I", chunk_data[pos:pos + 4])
+            pos = pos + 4
+            subsystem_string = self._ReadCString(chunk_data[pos:pos+subsystem_string_size])
+            pos = pos + subsystem_string_size
+            log_msg = self._ReadCString(chunk_data[pos:pos+message_string_size])
+
+            ut_cache = catalog.FileObjects[proc_info.uuid_file_index]
+            p_name = ut_cache.library_name
+
+            senderImagePath = ''  # Can be same as processImagePath
+            processImagePath = ut_cache.library_path
+            imageOffset = 0  # Same as senderProgramCounter
+            imageUUID = sender_image_id
+            processImageUUID = ut_cache.Uuid
+
+            log_entry = resources.LogEntry(
+                self._file.filename, log_file_pos, ct, time, Thread_identifier, log_type, 0, 0,
+                proc_info.pid , proc_info.euid, ttl, p_name, '', subsystem_string, '', '', '',
+                imageOffset, imageUUID, processImageUUID, senderImagePath,
+                processImagePath, log_msg)
+
+            logs.append(log_entry)
+
+        except (ImportError, NameError, UnboundLocalError):
+            raise
+
+        # TODO: refactor wide exception.
+        except Exception as ex:
+            logger.exception("Exception while processing logtype 'SimpleDump' @ 0x{:X} ct={}, skipping that log entry!".format(log_file_pos, ct))
 
         self._debug_log_count += 1
 
@@ -1122,7 +1201,7 @@ class TraceV3(data_format.BinaryDataFormat):
                 data.append([item_type, item_size, buffer[pos:pos+item_size]])
             elif item_type == 2: # %p (printed as hex with 0x prefix)
                 data.append([item_type, item_size, buffer[pos:pos+item_size]])
-            elif item_type in (0x20, 0x21, 0x22, 0x40, 0x41, 0x42, 0x31, 0x32): # string descriptor 0x22={public}%s 0x4x shows as %@ (if size=0, then '(null)')
+            elif item_type in (0x20, 0x21, 0x22, 0x25, 0x40, 0x41, 0x42, 0x45, 0x31, 0x32, 0xF2): # string descriptor 0x22={public}%s 0x4x shows as %@ (if size=0, then '(null)')
                 # byte 0xAB A=type(0=num,1=len??,2=string in stringsbuf,4=object)  B=style (0=normal,1=private,2={public})
                 # 0x3- is for %.*P object types
                 offset, size = struct.unpack('<HH', buffer[pos:pos+4])
@@ -1219,6 +1298,8 @@ class TraceV3(data_format.BinaryDataFormat):
                 data_type = data_item[0]
                 data_size = data_item[1]
                 raw_data  = data_item[2]
+                if custom_specifier and custom_specifier.find('mask.hash')>0:
+                    raw_data = b"< mask.hash: '" + base64.b64encode(raw_data) + b"' >"
                 if (specifier not in ('p', 'P', 's', 'S')) and (flags_width_precision.find('*') >= 0): # Width and/or precision is now a variable!
                     logger.debug('Found * , data_type is {}, exp={} for log @ 0x{:X}'.format(data_type, flags_width_precision + specifier, log_file_pos))
                     var_count = flags_width_precision.count('*')
@@ -1357,6 +1438,8 @@ class TraceV3(data_format.BinaryDataFormat):
                     #     msg += Read_CLDaemonStatusStateTrackerState(raw_data)
                     elif custom_specifier.find('_CLClientManagerStateTrackerState') > 0:
                         msg += self._Read_CLClientManagerStateTrackerState(raw_data)
+                    elif custom_specifier.find('mask.hash')>0 :
+                        msg += raw_data.decode('utf8').rstrip('\x00')
                     else:
                         msg += hit.group(0)
                         logger.info("Unknown custom data object type '{}' data size=0x{:X} in log @ 0x{:X}".format(custom_specifier, len(raw_data), log_file_pos))
@@ -1407,7 +1490,7 @@ class TraceV3(data_format.BinaryDataFormat):
         ts = self._FindClosestTimesyncItemInList(self.boot_uuid_ts_list, ct)
         time_string = 'N/A'
         if ts is not None:
-            time = ts.time_stamp + (ct - ts.continuousTime)*(1.0*ts.ts_numerator)/ts.ts_denominator
+            time = self.time_from_continuoustime(ct, ts)
             time_string = self._ReadAPFSTime(time)
         logger.debug("{} timestamp={}".format(msg, time_string))
 
@@ -1446,16 +1529,19 @@ class TraceV3(data_format.BinaryDataFormat):
 
             if tag == self._CHUNK_TAG_FIREHOSE:
                 self._ParseFirehoseChunkData(
-                    chunk_data[pos:end_pos], debug_file_pos, catalog, proc_info, logs)
+                    chunk_data[pos:end_pos], debug_file_pos+pos, catalog, proc_info, logs)
 
             elif tag == self._CHUNK_TAG_OVERSIZE:
-                self._ParseOversizeChunkData(chunk_data[pos:end_pos], debug_file_pos)
+                self._ParseOversizeChunkData(chunk_data[pos:end_pos], debug_file_pos+pos)
 
             elif tag == self._CHUNK_TAG_STATE:
-                self._ParseStateChunkData(chunk_data[pos:end_pos], catalog, proc_info, logs, debug_file_pos)
+                self._ParseStateChunkData(chunk_data[pos:end_pos], catalog, proc_info, logs, debug_file_pos+pos)
+
+            elif tag == self._CHUNK_TAG_SIMPLEDUMP:
+                self._ParseSimpleDumpData(chunk_data[pos:end_pos], catalog, proc_info, logs, debug_file_pos+pos)
 
             else:
-                logger.info("Unexpected tag value 0x{:X} @ 0x{:X} (Expected 0x6001, 0x6002 or 0x6003)".format(tag, log_file_pos))
+                logger.info("Unexpected tag value 0x{:X} @ 0x{:X} (Expected 0x6001, 0x6002, 0x6003 or 0x6004)".format(tag, log_file_pos))
 
             pos = end_pos
             if (pos - start_skew) % 8:

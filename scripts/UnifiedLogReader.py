@@ -207,7 +207,7 @@ class FileOutputWriter(object):
         'Timestamp                  Thread     Type        '
         'Activity             PID    TTL  Message')
 
-    def __init__(self, path, mode='LOG_DEFAULT'):
+    def __init__(self, path, mode='LOG_DEFAULT', localtime=False):
         '''Initializes a file output writer.
 
         Args:
@@ -224,6 +224,7 @@ class FileOutputWriter(object):
         self._file_object = None
         self._mode = mode
         self._path = path
+        self._localtime = localtime
 
     def Close(self):
         '''Closes the unified logs reader.'''
@@ -297,11 +298,11 @@ class FileOutputWriter(object):
 
                 else:
                     msg_parts = []
-                    if log_entry.signpost_name:
+                    if log_entry.signpost_string:
                         msg_parts.append('[{0:s}]'.format(
                             log_entry.signpost_string))
 
-                    msg_parts.append('{0:s} '.format(log_entry.p_name))
+                    msg_parts.append('{0:s}: '.format(log_entry.p_name))
                     if log_entry.lib:
                       msg_parts.append('({0:s}) '.format(log_entry.lib))
 
@@ -312,11 +313,15 @@ class FileOutputWriter(object):
                     msg_parts.append('{0:s} '.format(log_entry.log_msg))
 
                     msg = ''.join(msg_parts)
+                    if self._localtime: #Use the exact format as "log show" on Mac OSx
+                        timestring = time_value.astimezone().strftime('%Y-%m-%d %H:%M:%S.%f%z')
+                    else: # Use the timestamp in UTC
+                        timestring = str(time_value)
 
                     self._file_object.write((
                         u'{time:<26} {li.thread:<#10x} {li.log_type:<11} {li.act_id:<#20x} '
                         u'{li.pid:<6} {li.ttl:<4} {message}\n').format(
-                            li=log_entry, time=str(time_value), message=msg.replace('\n',',')))
+                            li=log_entry, time=timestring, message=msg.replace('\n',',').strip("\n ,\t")))
 
             except (IOError, OSError):
                 logger.exception('Error writing to output file')
@@ -441,7 +446,7 @@ def Main():
     '''
     description = (
         'UnifiedLogReader is a tool to read macOS Unified Logging tracev3 files.\n'
-        'This is version {0:s} tested on macOS 10.12.5 - 10.15 and iOS 12.\n\n'
+        'This is version {0:s} tested on macOS 10.12.5 - 10.15, iOS 12 and iOS 14.\n\n'
         'Notes:\n-----\n'
         'If you have a .logarchive, then point uuidtext_path to the .logarchive folder, \n'
         'the timesync folder is within the logarchive folder').format(UnifiedLog.__version__)
@@ -460,6 +465,8 @@ def Main():
              'Output format: SQLITE, TSV_ALL, LOG_DEFAULT  (Default is LOG_DEFAULT)'), type=str.upper)
 
     arg_parser.add_argument('-l', '--log_level', help='Log levels: INFO, DEBUG, WARNING, ERROR (Default is INFO)')
+    arg_parser.add_argument('-t', '--localtime', help='mimic OSX behaviour using localtime to ease comparison with diffing tool',
+                            default=False , type=bool)
 
     args = arg_parser.parse_args()
 
@@ -527,7 +534,7 @@ def Main():
     elif args.output_format in ('TSV_ALL', 'LOG_DEFAULT'):
         file_path = os.path.join(output_path, 'logs.txt')
         output_writer = FileOutputWriter(
-            file_path, mode=args.output_format)
+            file_path, mode=args.output_format, localtime=args.localtime)
 
     if not output_writer.Open():
         return False
