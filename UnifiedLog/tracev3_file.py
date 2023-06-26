@@ -27,11 +27,16 @@ class TraceV3(data_format.BinaryDataFormat):
 
     _TRACEPOINT_FLAG_HAS_ACTIVITY_ID = 0x0001
     _TRACEPOINT_FLAG_HAS_UNIQUE_PID = 0x0010
+    _TRACEPOINT_FLAG_HAS_LARGE_OFFSET = 0x0020
     _TRACEPOINT_FLAG_HAS_PRIVATE_STRINGS_RANGE = 0x0100
-    _TRACEPOINT_FLAG_HAS_OTHER_ACTIVITY_ID = 0x0200
-    _TRACEPOINT_FLAG_HAS_SUB_SYSTEM = 0x0200
+    _TRACEPOINT_FLAG_HAS_OTHER_AID = 0x0200
+    _TRACEPOINT_FLAG_HAS_SUBSYSTEM = 0x0200
+    _TRACEPOINT_FLAG_HAS_RULES = 0x0400
+
     _TRACEPOINT_FLAG_HAS_TTL = 0x0400
-    _TRACEPOINT_FLAG_HAS_DATA_REFERENCE = 0x0800
+    _TRACEPOINT_FLAG_HAS_OVERSIZE_DATA_REFERENCE = 0x0800
+    _TRACEPOINT_FLAG_HAS_BACKTRACE =0x1000
+
     _TRACEPOINT_FLAG_HAS_SIGNPOST_NAME_REFERENCE = 0x8000
 
     def __init__(self, v_fs, v_file, ts_list, uuidtext_folder_path, large_data_cache, cached_files=None):
@@ -452,8 +457,8 @@ class TraceV3(data_format.BinaryDataFormat):
         '''
         log_entry = None
 
-        (u1, u2, fmt_str_v_offset, thread, ct_rel, ct_rel_upper,
-         log_data_len) = struct.unpack('<HHIQIHH', tracepoint_data[:24])
+        (record_type, logtype , flags, fmt_str_v_offset, thread, ct_rel, ct_rel_upper,
+         log_data_len) = struct.unpack('<BBHIQIHH', tracepoint_data[:24])
 
         ct = continuousTime + (ct_rel | (ct_rel_upper << 32))
         # processing
@@ -461,6 +466,7 @@ class TraceV3(data_format.BinaryDataFormat):
 
         time = self.time_from_continuoustime(ct)
         #logger.debug("Type 6001 LOG timestamp={}".format(self._ReadAPFSTime(time)))
+        no_fmt_str = fmt_str_v_offset & 0x80000000
 
         try: # Big Exception block for any log uncaught exception
             dsc_cache = catalog.FileObjects[proc_info.dsc_file_index] if (proc_info.dsc_file_index != -1) else None
@@ -486,83 +492,96 @@ class TraceV3(data_format.BinaryDataFormat):
             has_activity_unk = False # unknown flag
             is_activity = False
             log_type = 'Default'
-            u1_upper_byte = (u1 >> 8)
             is_signpost = False
             signpost_string = 'spid 0x%x,'
             signpost_name =''
-            if u1_upper_byte & 0x80: # signpost (Default)
+            if logtype & 0x80: # signpost (Default)
                 is_signpost = True
-                if u1_upper_byte & 0xC0 == 0xC0: signpost_string += ' system,'  # signpostScope
+                if logtype & 0xC0 == 0xC0: signpost_string += ' system,'  # signpostScope
                 else:                            signpost_string += ' process,' # signpostScope
-                if u1_upper_byte & 0x82 == 0x82: signpost_string += ' end'      # signpostType
-                elif u1_upper_byte & 0x81 == 0x81: signpost_string += ' begin'
+                if logtype & 0x82 == 0x82: signpost_string += ' end'      # signpostType
+                elif logtype & 0x81 == 0x81: signpost_string += ' begin'
                 else:                            signpost_string += ' event'
-            elif u1_upper_byte == 0x01:
+            elif logtype == 0x01:
                 log_type = 'Info'
-                if (u1 & 0x0F) == 0x02:
+                if (record_type & 0x0F) == 0x02:
                     log_type ='Activity'
                     is_activity = True
-            elif u1_upper_byte == 0x02: log_type = 'Debug'
-            elif u1_upper_byte == 0x10: log_type = 'Error'
-            elif u1_upper_byte == 0x11: log_type = 'Fault'
+            elif logtype == 0x02: log_type = 'Debug'
+            elif logtype == 0x10: log_type = 'Error'
+            elif logtype == 0x11: log_type = 'Fault'
 
-            if u2 & 0x7000 or u2 & 0x00E0:  # E=1110
-                logger.info('Unknown flag for u2 encountered u2=0x{:4X} @ 0x{:X} ct={}'.format(u2, log_file_pos, ct))
-                #raise ValueError('Unk u2 flag')
+            if flags & 0x7000 or flags & 0x00C0:  # E=1110
+                logger.info('Unknown flag for u2 encountered u2=0x{:4X} @ 0x{:X} ct={}'.format(flags, log_file_pos, ct))
+                #raise ValueError('Unk u2 flag')   #215
 
-            if u2 & 0x0100: has_activity_unk = True if is_activity else False
-            has_context_data = False
-            if u2 & 0x1000: has_context_data = True
 
-            has_alternate_uuid = bool(u2 & 0x0008)
-            has_msg_in_dsc = bool(u2 & 0x0004)
-            has_msg_in_uuidtext = bool(u2 & 0x0002)
+
+            has_current_aid = bool(flags & self._TRACEPOINT_FLAG_HAS_ACTIVITY_ID)
+            has_msg_in_uuidtext = bool(flags & 0x0002)
+            has_msg_in_dsc = bool(flags & 0x0004)
+            has_alternate_uuid = bool(flags & 0x0008)
+            has_unique_pid = bool(flags & self._TRACEPOINT_FLAG_HAS_UNIQUE_PID)
+            has_large_offset = bool(flags & self._TRACEPOINT_FLAG_HAS_LARGE_OFFSET)
+
+            has_private_data = bool(flags & self._TRACEPOINT_FLAG_HAS_PRIVATE_STRINGS_RANGE)
+            # TODO: Seems this always evaluates to has_activity_unk =False as is_activity is initialized False.
+            # dtformats has other insights the the legacy code below
+            if flags & self._TRACEPOINT_FLAG_HAS_PRIVATE_STRINGS_RANGE: has_activity_unk = True if is_activity else False
+
+            has_other_aid = bool(flags & self._TRACEPOINT_FLAG_HAS_OTHER_AID)
+
+            has_context_data = bool(flags & self._TRACEPOINT_FLAG_HAS_BACKTRACE)
+
 
             log_data_len2 = log_data_len
             pos3 = 24
             if is_activity:  # cur_aid [apple]
-                u5, u6 = struct.unpack('<II', tracepoint_data[pos3:pos3 + 8])  # check for activity
-                if u6 == 0x80000000:
-                    act_id.append(u5)
+
+                current_aid = None
+                if has_current_aid:
+                    current_aid, = struct.unpack("<Q",tracepoint_data[pos3:pos3 + 8])
                     pos3 += 8
-                    log_data_len2 -= 8
+                    log_data_len2 = log_data_len2 -8
+                    act_id.append(current_aid & 0xffffffff)
+
+                unique_pid = None
+                if has_unique_pid:
+                    unique_pid, = struct.unpack("<Q",tracepoint_data[pos3:pos3 + 8])
+                    pos3 += 8
+                    log_data_len2-=8
+
+                other_aid = None
+                if has_other_aid:
+                    other_aid, = struct.unpack("<Q",tracepoint_data[pos3:pos3 + 8])
+                    pos3 += 8
+                    log_data_len2-=8
+                    act_id.append(other_aid & 0xffffffff)
+
+                new_activity_identifier = None
+                if logtype != 0x03:
+                    new_activity_identifier, u6 = struct.unpack('<II',
+                                                                tracepoint_data[pos3:pos3 + 8])  # check for activity
+                    if u6 == 0x80000000:
+                        act_id.append(new_activity_identifier)
+                        pos3 += 8
+                        log_data_len2 -= 8
+                    else:
+                        logger.error('Expected activityID, got something else!')
                 else:
-                    logger.error('Expected activityID, got something else!')
-
-                if u2 & self._TRACEPOINT_FLAG_HAS_UNIQUE_PID:
-                    proc_id = struct.unpack('<Q', tracepoint_data[pos3:pos3 + 8])[0]
-                    pos3 += 8
-                    log_data_len2 -= 8
-
-                if u2 & self._TRACEPOINT_FLAG_HAS_ACTIVITY_ID:  # another act_id # new_aid [apple]
-                    u5, u6 = struct.unpack('<II', tracepoint_data[pos3:pos3 + 8])
-                    if u6 == 0x80000000:
-                        act_id.append(u5)
-                        pos3 += 8
-                        log_data_len2 -= 8
-                    else:
-                        logger.error('Expected activityID, got something else!')
-
-                if u2 & self._TRACEPOINT_FLAG_HAS_OTHER_ACTIVITY_ID:  # yet another act_id # other_aid [apple]
-                    u5, u6 = struct.unpack('<II', tracepoint_data[pos3:pos3 + 8])
-                    if u6 == 0x80000000:
-                        act_id.append(u5)
-                        pos3 += 8
-                        log_data_len2 -= 8
-                    else:
-                        logger.error('Expected activityID, got something else!')
+                    logger.warning('Logtype != 0x03 !')
 
             else:
-                if u2 & self._TRACEPOINT_FLAG_HAS_ACTIVITY_ID:
-                    u5, u6 = struct.unpack('<II', tracepoint_data[pos3:pos3 + 8])
+                if has_current_aid:
+                    current_aid, u6 = struct.unpack('<II', tracepoint_data[pos3:pos3 + 8])
                     if u6 == 0x80000000:
-                        act_id.append(u5)
+                        act_id.append(current_aid)
                         pos3 += 8
                         log_data_len2 -= 8
                     else:
                         logger.error('Expected activityID, got something else!')
 
-                if u2 & self._TRACEPOINT_FLAG_HAS_PRIVATE_STRINGS_RANGE:
+                if flags & self._TRACEPOINT_FLAG_HAS_PRIVATE_STRINGS_RANGE:
                     if private_strings:
                         priv_str_v_offset, priv_str_len = struct.unpack('<HH', tracepoint_data[pos3:pos3 + 4])
                         pos3 += 4
@@ -570,9 +589,19 @@ class TraceV3(data_format.BinaryDataFormat):
                     else:
                         logger.error('Did not read priv_str_v_offset as no private_strings are present @ log 0x{:X}! is_activity={}'.format(log_file_pos, bool(is_activity)))
 
-            u5 = struct.unpack('<I', tracepoint_data[pos3:pos3 + 4])[0]
+            UUID_entry_load_address = struct.unpack('<I', tracepoint_data[pos3:pos3 + 4])[0]
             pos3 += 4
             log_data_len2 -= 4
+
+            if has_large_offset:
+                large_offset, = struct.unpack("<H", tracepoint_data[pos3:pos3 + 2])
+                if (large_offset<=0x7fff): #Stored value is 0xFFFE....
+                    fmt_str_v_offset += large_offset << 31
+                else:
+                    unknown_goal=True
+                    logger.error('Inplausible value for large_offset 0x%04X', large_offset)
+                pos3 += 2
+                log_data_len2 -= 2
 
             if has_alternate_uuid:
                 if not has_msg_in_uuidtext: # Then 2 bytes (uuid_file_index) instead of UUID
@@ -582,16 +611,16 @@ class TraceV3(data_format.BinaryDataFormat):
                     uuid_found = False
                     for extra_ref in proc_info.extra_file_refs:
                         if (extra_ref.id == uuid_file_id) and \
-                        ( (u5 >= extra_ref.v_offset) and ( (u5-extra_ref.v_offset) < extra_ref.data_size) ):  # found it
+                        ( (UUID_entry_load_address >= extra_ref.v_offset) and ( (UUID_entry_load_address-extra_ref.v_offset) < extra_ref.data_size) ):  # found it
                             ut = catalog.FileObjects[extra_ref.uuid_file_index]
                             format_str = ut.ReadFmtStringFromVirtualOffset(fmt_str_v_offset)
                             imageUUID = ut.Uuid
                             senderImagePath = ut.library_path
-                            imageOffset = u5 - extra_ref.v_offset
+                            imageOffset = UUID_entry_load_address - extra_ref.v_offset
                             uuid_found = True
                             break
                     if not uuid_found:
-                        logger.error('no uuid found for absolute pc - uuid_file_id was {} u5=0x{:X} fmt_str_v_offset=0x{:X} @ 0x{:X} ct={}'.format(uuid_file_id, u5, fmt_str_v_offset, log_file_pos, ct))
+                        logger.error('no uuid found for absolute pc - uuid_file_id was {} u5=0x{:X} fmt_str_v_offset=0x{:X} @ 0x{:X} ct={}'.format(uuid_file_id, UUID_entry_load_address, fmt_str_v_offset, log_file_pos, ct))
                         format_str = '<compose failure [missing precomposed log]>' # error message from log utility
 
                 else:             # UUID
@@ -628,18 +657,18 @@ class TraceV3(data_format.BinaryDataFormat):
             sp_name_ref = None
 
             if not is_activity:
-                if u2 & self._TRACEPOINT_FLAG_HAS_SUB_SYSTEM:
+                if flags & self._TRACEPOINT_FLAG_HAS_OTHER_AID:
                     item_id = struct.unpack('<H', tracepoint_data[pos3:pos3 + 2])[0]
                     pos3 += 2
                     log_data_len2 -= 2
                     sub_sys, cat = proc_info.GetSubSystemAndCategory(item_id)
 
-                if u2 & self._TRACEPOINT_FLAG_HAS_TTL:
+                if flags & self._TRACEPOINT_FLAG_HAS_TTL:
                     ttl = struct.unpack('<B', tracepoint_data[pos3:pos3 + 1])[0]
                     pos3 += 1
                     log_data_len2 -= 1
 
-                if u2 & self._TRACEPOINT_FLAG_HAS_DATA_REFERENCE:
+                if flags & self._TRACEPOINT_FLAG_HAS_OVERSIZE_DATA_REFERENCE:
                     # This is a ref to an object stored as type 0x0602 blob
                     data_ref_id = struct.unpack('<H', tracepoint_data[pos3:pos3 + 2])[0]
                     pos3 += 2
@@ -652,14 +681,14 @@ class TraceV3(data_format.BinaryDataFormat):
                     log_data_len2 -= 8
                     signpost_string = signpost_string % (spid_val)
 
-                if u2 & self._TRACEPOINT_FLAG_HAS_SIGNPOST_NAME_REFERENCE:
+                if flags & self._TRACEPOINT_FLAG_HAS_SIGNPOST_NAME_REFERENCE:
                     sp_name_ref = struct.unpack('<I', tracepoint_data[pos3:pos3 + 4])[0]
                     pos3 += 4
                     log_data_len2 -= 4
 
             # Get format_str and lib now
             if has_msg_in_uuidtext: # u2 & 0x0002: # msg string in uuidtext file
-                imageOffset = u5
+                imageOffset = UUID_entry_load_address
                 if has_alternate_uuid: # another uuidtext file was specified, already read that above
                     if sp_name_ref is not None:
                         signpost_name = ut.ReadFmtStringFromVirtualOffset(sp_name_ref)
@@ -677,15 +706,15 @@ class TraceV3(data_format.BinaryDataFormat):
                     except (KeyError, IOError):
                         logger.error("Could not get signpost name! @ 0x{:X} ct={}".format(log_file_pos, ct))
 
-                cache_b1 = dsc_cache.GetUuidEntryFromVirtualOffset(u5)
+                cache_b1 = dsc_cache.GetUuidEntryFromVirtualOffset(UUID_entry_load_address)
                 if cache_b1:
                     lib = cache_b1[4] # senderimage_name
                     imageUUID = cache_b1[2]
                     senderImagePath = cache_b1[3]
-                    imageOffset = u5 - cache_b1[0]
+                    imageOffset = UUID_entry_load_address - cache_b1[0]
 
                 try:
-                    if fmt_str_v_offset & 0x80000000: # check for highest bit
+                    if no_fmt_str: # check for highest bit
                         format_str = "%s"
                         logger.debug("fmt_str_v_offset highest bit set @ 0x{:X} ct={}".format(log_file_pos, ct))
                     else:
@@ -713,7 +742,7 @@ class TraceV3(data_format.BinaryDataFormat):
                     else:
                         logger.error('Flag has_private_data but no strings present! @ 0x{:X} ct={}'.format(log_file_pos, ct))
 
-                if u1 & 0x3 == 0x3: # data_descriptor_at_buffer_end
+                if record_type & 0x3 == 0x3: # data_descriptor_at_buffer_end
                     log_data = self.ReadLogDataBuffer2(tracepoint_data[pos3:pos3 + log_data_len2], log_data_len2, strings_slice)
                 else:
                     log_data = self.ReadLogDataBuffer(tracepoint_data[pos3:pos3 + log_data_len2], log_data_len2, strings_slice, has_context_data)
@@ -749,7 +778,6 @@ class TraceV3(data_format.BinaryDataFormat):
             logger.exception("Exception while processing log @ 0x{:X} ct={}, skipping that log entry!".format(log_file_pos, ct))
 
         return 24 + log_data_len, log_entry
-
     def _ParseMetaChunk(self, chunk_data):
         '''Parses catalog chunk data.
 

@@ -114,6 +114,7 @@ class Dsc(data_format.BinaryDataFormat):
 
             self.uuid_entries.append([v_off, size, uuid_object, lib_path, lib_name])
 
+        uuid_entry_offset2 = file_object.tell()
 
         return True
 
