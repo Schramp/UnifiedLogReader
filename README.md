@@ -26,8 +26,9 @@ Python 3.6+ and the following modules
 * biplist
 * ipaddress
 
-UnifiedLogReader (and the dependencies) can be installed using `pip install unifiedlog lz4 biplist ipaddress` 
+**The version on PyPi is old, and I need to discuss with @ydkhatri about the release process.**
 
+UnifiedLogReader (and the dependencies) can be installed using **`pip install git+https://github.com/Schramp/UnifiedLogReader.git lz4 biplist ipaddress`**
 
 Do not download from here, unless you want the latest code.
 For development, if you only need the dependencies, use `pip install -r requirements.txt`
