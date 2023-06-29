@@ -2,8 +2,6 @@ import abc
 import os
 
 from UnifiedLog import virtual_file_system, virtual_file, tracev3_file, logger, Lib as UnifiedLogLib
-from scripts.UnifiedLogReader import SQLiteDatabaseOutputWriter
-
 
 class OutputWriter(object):
     '''Output writer interface.'''
@@ -52,13 +50,8 @@ class UnifiedLogReaderHelper(object):
 
     # TODO: remove log_list_process_func callback from TraceV3.Parse()
     def _ProcessLogsList(self, logs, tracev3):
-        if isinstance(self._output_writer, SQLiteDatabaseOutputWriter):
-            self._output_writer.WriteLogEntries(logs)
-            self.total_logs_processed += len(logs)
-        else:
-            for log_entry in logs:
-                self._output_writer.WriteLogEntry(log_entry)
-                self.total_logs_processed += 1
+        self._output_writer.WriteLogEntries(logs)
+        self.total_logs_processed += len(logs)
 
     def _ReadTraceV3File(self, tracev3_path, output_writer):
         '''Reads a tracev3 file.
