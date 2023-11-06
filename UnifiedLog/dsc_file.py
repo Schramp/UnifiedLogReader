@@ -29,6 +29,8 @@ class Dsc(data_format.BinaryDataFormat):
         self._format_version = None
         self.range_entries = []  # [ [uuid_index, v_off, data_offset, data_len], [..], ..] # data_offset is absolute in file
         self.uuid_entries  = []  # [ [v_off,  size,  uuid,  lib_path, lib_name], [..], ..] # v_off is virt offset
+        self.fmt_cache = {}
+
 
     def _ParseFileObject(self, file_object):
         '''Parses a dsc file-like object.
@@ -131,6 +133,7 @@ class Dsc(data_format.BinaryDataFormat):
         logger.error('Failed to find v_offset in Dsc!')
         return (None, None)
 
+
     def ReadFmtStringAndEntriesFromVirtualOffset(self, v_offset):
         '''Reads the format string, range and UUID entry for a specific offset.
 
@@ -147,6 +150,10 @@ class Dsc(data_format.BinaryDataFormat):
           KeyError: if no range entry could be found corresponding the offset.
           IOError: if the format string cannot be read.
         '''
+
+        if v_offset in self.fmt_cache:
+            return self.fmt_cache[v_offset]
+
         range_entry, uuid_entry = self.FindVirtualOffsetEntries(v_offset)
         if not range_entry:
             raise KeyError('Missing range entry for offset: 0x{0:08x}'.format(
@@ -157,7 +164,9 @@ class Dsc(data_format.BinaryDataFormat):
         file_object.seek(range_entry[2] + rel_offset)
         cstring_data = file_object.read(range_entry[3] - rel_offset)
         cstring = self._ReadCString(cstring_data, range_entry[3] - rel_offset)
+        self.fmt_cache[v_offset] = (cstring, range_entry, uuid_entry)
         return cstring, range_entry, uuid_entry
+
 
     def GetUuidEntryFromVirtualOffset(self, v_offset):
         '''Returns uuid_entry where uuid_entry[xx].v_off <= v_offset and falls within allowed size'''
