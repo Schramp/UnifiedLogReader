@@ -29,8 +29,10 @@ class Dsc(data_format.BinaryDataFormat):
         self._format_version = None
         self.uuid_entries  = []  # [ [v_off,  size,  uuid,  lib_path, lib_name], [..], ..] # v_off is virt offset
         self.uuid_entry_dict = {}
+        self.uuid_entry_offsets = []
         self.num_uuid_entries = 0
         self.range_entries = {}  # {v_off: [uuid_index, v_off, data_offset, data_len]} # data_offset is absolute in file
+        self.range_entry_offsets = []
         self.num_range_entries = 0
         self.fmt_cache = {}
 
@@ -144,15 +146,16 @@ class Dsc(data_format.BinaryDataFormat):
         pos=bisect_right(self.range_entry_offsets, v_offset, 0, self.num_range_entries)
         # now, the v_offset is somewhere *after* the previous range, so we need
         # to check if the v_offsets falls within the *previous* range
-        range_offset = self.range_entry_offsets[pos-1]
-        # get the range
-        a = self.range_entries[range_offset]
+        if pos > 0:
+            range_offset = self.range_entry_offsets[pos-1]
+            # get the range
+            a = self.range_entries[range_offset]
 
-        # now check if the v_offset is within the range
-        if (a[1] + a[3]) > v_offset:
-            ret_range_entry = a
-            ret_uuid_entry = self.uuid_entries[a[0]]
-            return (ret_range_entry, ret_uuid_entry)
+            # now check if the v_offset is within the range
+            if (a[1] + a[3]) > v_offset:
+                ret_range_entry = a
+                ret_uuid_entry = self.uuid_entries[a[0]]
+                return (ret_range_entry, ret_uuid_entry)
 
         #Not found
         logger.error('Failed to find v_offset in Dsc!')
@@ -202,13 +205,14 @@ class Dsc(data_format.BinaryDataFormat):
         pos=bisect_right(self.uuid_entry_offsets, v_offset, 0, self.num_uuid_entries)
         # now, the v_offset is somewhere *after* the previous range, so we need
         # to check if the v_offsets falls within the *previous* range
-        uuid_offset = self.uuid_entry_offsets[pos-1]
-        # get the range
-        b = self.uuid_entry_dict[uuid_offset]
+        if pos > 0:
+            uuid_offset = self.uuid_entry_offsets[pos-1]
+            # get the range
+            b = self.uuid_entry_dict[uuid_offset]
 
-        # now check if the v_offset is within the uuid range
-        if (b[0] + b[1]) > v_offset:
-            return b
+            # now check if the v_offset is within the uuid range
+            if (b[0] + b[1]) > v_offset:
+                return b
 
         logger.error('Failed to find uuid_entry for v_offset 0x{:X} in Dsc!'.format(v_offset))
         return None
