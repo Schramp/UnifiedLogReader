@@ -25,6 +25,7 @@ class Uuidtext(data_format.BinaryDataFormat):
         self.library_path = ''
         self.library_name = ''
         self.Uuid = uuid
+        self.fmt_cache = {}
 
     def _ParseFileObject(self, file_object):
         '''Parses an uuidtext file-like object.
@@ -95,15 +96,21 @@ class Uuidtext(data_format.BinaryDataFormat):
         if v_offset & 0x80000000:
             return '%s'
 
+        if v_offset in self.fmt_cache:
+            return self.fmt_cache[v_offset]
+
         for range_start_offset, data_offset, data_len in self._entries:
             range_end_offset = range_start_offset + data_len
             if range_start_offset <= v_offset < range_end_offset:
                 rel_offset = v_offset - range_start_offset
-
                 file_object = self._file.file_pointer
-                file_object.seek(data_offset + rel_offset)
-                format_string_data = file_object.read(data_len - rel_offset)
-                return self._ReadCString(format_string_data, data_len - rel_offset)
+                off_ = data_offset + rel_offset
+                len_ = data_len - rel_offset
+                file_object.seek(off_)
+                format_string_data = file_object.read(len_)
+                format_string = self._ReadCString(format_string_data, len_)
+                self.fmt_cache[v_offset] = format_string
+                return format_string
 
         # This is the value returned by the MacOS 'log' program if the uuidtext
         # entry is not found.

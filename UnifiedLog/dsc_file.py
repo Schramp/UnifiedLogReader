@@ -5,6 +5,7 @@ import os
 import posixpath
 import struct
 from uuid import UUID
+from bisect import bisect_right
 
 from UnifiedLog import data_format
 from UnifiedLog import logger
@@ -14,7 +15,6 @@ class Dsc(data_format.BinaryDataFormat):
     '''Shared-Cache strings (dsc) file parser.
 
     Attributes:
-      range_entries (list[tuple[int, int, int, int]]): range entries.
       uuid_entries (list[tuple[int, int, UUID, str, str]]): UUID entries.
     '''
 
@@ -27,8 +27,13 @@ class Dsc(data_format.BinaryDataFormat):
         super(Dsc, self).__init__()
         self._file = v_file
         self._format_version = None
-        self.range_entries = []  # [ [uuid_index, v_off, data_offset, data_len], [..], ..] # data_offset is absolute in file
         self.uuid_entries  = []  # [ [v_off,  size,  uuid,  lib_path, lib_name], [..], ..] # v_off is virt offset
+        self.uuid_entry_dict = {}
+        self.num_uuid_entries = 0
+        self.range_entries = {}  # {v_off: [uuid_index, v_off, data_offset, data_len]} # data_offset is absolute in file
+        self.num_range_entries = 0
+        self.fmt_cache = {}
+
 
     def _ParseFileObject(self, file_object):
         '''Parses a dsc file-like object.
@@ -68,16 +73,22 @@ class Dsc(data_format.BinaryDataFormat):
                 uuid_index, v_off, data_offset, data_len = struct.unpack(
                     "<IIII", range_entry_data)
                 range_entry = [uuid_index, v_off, data_offset, data_len]
-                self.range_entries.append(range_entry)
+                if v_off in self.range_entries:
+                    raise ValueError("v_off not unique!")
+                self.range_entries[v_off] = range_entry
             elif major_version == 2:
                 range_entry_data = file_object.read(24)
                 v_off, data_offset, data_len, uuid_index = struct.unpack(
                     "<QIIQ", range_entry_data)
                 range_entry = [uuid_index, v_off, data_offset, data_len]
-                self.range_entries.append(range_entry)
+                if v_off in self.range_entries:
+                    raise ValueError("v_off not unique!")
+                self.range_entries[v_off] = range_entry
             else:
                 raise UserWarning("Unsupported DSC Format")
 
+        self.range_entry_offsets = sorted([k for k in self.range_entries.keys()])
+        self.num_range_entries = len(self.range_entry_offsets)
 
         uuid_entry_offset = file_object.tell()
         while len(self.uuid_entries) < num_uuid_entries:
@@ -113,6 +124,12 @@ class Dsc(data_format.BinaryDataFormat):
                 raise UserWarning("Unsupported DSC Format")
 
             self.uuid_entries.append([v_off, size, uuid_object, lib_path, lib_name])
+            if v_off in self.uuid_entry_dict:
+                raise ValueError("expected v_off to be unique in uuid_entries")
+            self.uuid_entry_dict[v_off] = [v_off, size, uuid_object, lib_path, lib_name]
+
+        self.uuid_entry_offsets = sorted([k for k in self.uuid_entry_dict.keys()])
+        self.num_uuid_entries = len(self.uuid_entry_offsets)
 
         uuid_entry_offset2 = file_object.tell()
 
@@ -120,16 +137,27 @@ class Dsc(data_format.BinaryDataFormat):
 
     def FindVirtualOffsetEntries(self, v_offset):
         '''Return tuple (range_entry, uuid_entry) where range_entry[xx].size <= v_offset'''
-        ret_range_entry = None
-        ret_uuid_entry = None
-        for a in self.range_entries:
-            if (a[1] <= v_offset) and ((a[1] + a[3]) > v_offset):
-                ret_range_entry = a
-                ret_uuid_entry = self.uuid_entries[a[0]]
-                return (ret_range_entry, ret_uuid_entry)
+
+        # find the the range_entry by searching for idx where we can insert
+        # v_offset without breaking sort. bisect_right makes sure that our
+        # index is one higher than the index of the range we want to check
+        pos=bisect_right(self.range_entry_offsets, v_offset, 0, self.num_range_entries)
+        # now, the v_offset is somewhere *after* the previous range, so we need
+        # to check if the v_offsets falls within the *previous* range
+        range_offset = self.range_entry_offsets[pos-1]
+        # get the range
+        a = self.range_entries[range_offset]
+
+        # now check if the v_offset is within the range
+        if (a[1] + a[3]) > v_offset:
+            ret_range_entry = a
+            ret_uuid_entry = self.uuid_entries[a[0]]
+            return (ret_range_entry, ret_uuid_entry)
+
         #Not found
         logger.error('Failed to find v_offset in Dsc!')
         return (None, None)
+
 
     def ReadFmtStringAndEntriesFromVirtualOffset(self, v_offset):
         '''Reads the format string, range and UUID entry for a specific offset.
@@ -147,6 +175,10 @@ class Dsc(data_format.BinaryDataFormat):
           KeyError: if no range entry could be found corresponding the offset.
           IOError: if the format string cannot be read.
         '''
+
+        if v_offset in self.fmt_cache:
+            return self.fmt_cache[v_offset]
+
         range_entry, uuid_entry = self.FindVirtualOffsetEntries(v_offset)
         if not range_entry:
             raise KeyError('Missing range entry for offset: 0x{0:08x}'.format(
@@ -157,15 +189,27 @@ class Dsc(data_format.BinaryDataFormat):
         file_object.seek(range_entry[2] + rel_offset)
         cstring_data = file_object.read(range_entry[3] - rel_offset)
         cstring = self._ReadCString(cstring_data, range_entry[3] - rel_offset)
+        self.fmt_cache[v_offset] = (cstring, range_entry, uuid_entry)
         return cstring, range_entry, uuid_entry
+
 
     def GetUuidEntryFromVirtualOffset(self, v_offset):
         '''Returns uuid_entry where uuid_entry[xx].v_off <= v_offset and falls within allowed size'''
-        for b in self.uuid_entries:
-            if (b[0] <= v_offset) and ((b[0] + b[1]) > v_offset):
-                rel_offset = v_offset - b[0]
-                return b
-        #Not found
+
+        # find the the range_entry by searching for idx where we can insert
+        # v_offset without breaking sort. bisect_right makes sure that our
+        # index is one higher than the index of the range we want to check
+        pos=bisect_right(self.uuid_entry_offsets, v_offset, 0, self.num_uuid_entries)
+        # now, the v_offset is somewhere *after* the previous range, so we need
+        # to check if the v_offsets falls within the *previous* range
+        uuid_offset = self.uuid_entry_offsets[pos-1]
+        # get the range
+        b = self.uuid_entry_dict[uuid_offset]
+
+        # now check if the v_offset is within the uuid range
+        if (b[0] + b[1]) > v_offset:
+            return b
+
         logger.error('Failed to find uuid_entry for v_offset 0x{:X} in Dsc!'.format(v_offset))
         return None
 
