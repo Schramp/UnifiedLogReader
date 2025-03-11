@@ -2,6 +2,11 @@
 
 A parser for Unified logging .tracev3 files.
 
+NOTE: I think mandiant is running faster then this project. Check out their version as well
+
+https://github.com/mandiant/macos-UnifiedLogs
+
+
 ## Project Status
 
 ### alpha (experimental)
