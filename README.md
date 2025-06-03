@@ -17,12 +17,12 @@ _This is a work in progress. Currently this does not support the first version o
 |----------------------|-----------------|-------------------|
 | macOS 10.12.5- 10.15 | tested to work  | Unknown           |
 | iOS 16               | tested          | diff of textlog shows minor differences (uninterpereted tags and values mostly e.g. 0 means false)|
-| iOS 18               | tested | diff of textlog shows minor differences (digits in timestamp at microsecond level, small spacing differences, uninterpereted tags and values mostly e.g. 0 means false) |
+| iOS 18               | tested | diff with OSX textlog shows minor differences (digits in timestamp at microsecond level, small spacing differences, uninterpereted tags and values mostly e.g. 0 means false), compared some lines with tool of mandiant showed indentical information (spacing differences etc) |
 
 Support for iOS 16.x is tested.
 
 Support for iOS 18.x is tested.
-For unclear reasons the tools shows earlier results compared to the iOS log tool. 
+For unclear reasons the tools shows earlier results compared to the iOS log tool. Comparing with mandiant showed minor differences e.g. in time resolution (ms vs us).
 
 ## License
 
@@ -166,4 +166,3 @@ notable differences:
 2023-06-01 10:56:04.620700+0200 0x64d      Default     0x0                  73     0    driverkitd: [com.apple.km:StateManagement] State refresh (id: <private>, reason: Sent new drivers): <private> did not update state      2023-06-01 10:56:04.620700+0200 0x64d      Default     0x0                  73     0    driverkitd: [com.apple.km:StateManagement] State refresh (id: <private>, reason: Sent new drivers): <private> did not update state
 
 ```
-
