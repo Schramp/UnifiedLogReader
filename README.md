@@ -17,11 +17,12 @@ _This is a work in progress. Currently this does not support the first version o
 |----------------------|-----------------|-------------------|
 | macOS 10.12.5- 10.15 | tested to work  | Unknown           |
 | iOS 16               | tested          | diff of textlog shows minor differences (uninterpereted tags and values mostly e.g. 0 means false)|
-| iOS 18               | tested to work  |  Not compared (yet) |
+| iOS 18               | tested | diff of textlog shows minor differences (digits in timestamp at microsecond level, small spacing differences, uninterpereted tags and values mostly e.g. 0 means false) |
 
 Support for iOS 16.x is tested.
 
 Support for iOS 18.x is tested.
+For unclear reasons the tools shows earlier results compared to the iOS log tool. 
 
 ## License
 
