@@ -20,6 +20,7 @@ _This is a work in progress. Currently this does not support the first version o
 | iOS 18               | tested to work  |  Not compared (yet) |
 
 Support for iOS 16.x is tested.
+
 Support for iOS 18.x is tested.
 
 ## License
