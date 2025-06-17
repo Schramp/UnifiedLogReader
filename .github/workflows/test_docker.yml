@@ -61,7 +61,7 @@ jobs:
         git clone https://github.com/Schramp/UnifiedLogTestData.git
         cd UnifiedLogTestData
         ls -aul
-        echo $TESTFILEPASSWORD
+        echo TESTFILEPASSWORD $TESTFILEPASSWORD
         rar l -hp$TESTFILEPASSWORD system_logs.logarchive_small.rar
     - name: Install dependencies
       run: |
