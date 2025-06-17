@@ -55,10 +55,12 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         apt-get update -q
-        apt-get install -y libterm-readline-gnu-perl locales software-properties-common git
+        apt-get install -y libterm-readline-gnu-perl locales software-properties-common git rar
         locale-gen en_US.UTF-8
         ln -f -s /usr/share/zoneinfo/UTC /etc/localtime
         git clone https://github.com/Schramp/UnifiedLogTestData.git
+        cd UnifiedLogTestData
+        rar l -hp$TESTFILEPASSWORD system_logs.logarchive_small.rar
     - name: Install dependencies
       run: |
         apt-get update -q
