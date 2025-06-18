@@ -62,7 +62,7 @@ jobs:
         ln -f -s /usr/share/zoneinfo/UTC /etc/localtime
         git clone https://github.com/Schramp/UnifiedLogTestData.git
         cd UnifiedLogTestData
-        rar l -hp$TESTFILEPASSWORD system_logs.logarchive_small.rar
+        rar x -hp$TESTFILEPASSWORD system_logs.logarchive_small.rar
     - name: Install dependencies
       run: |
         apt-get update -q
