@@ -53,6 +53,8 @@ jobs:
     - name: Set up container
       env:
         DEBIAN_FRONTEND: noninteractive
+        TESTFILEPASSWORD: ${{ secrets.TESTFILEPASSWORD }}
+        
       run: |
         apt-get update -q
         apt-get install -y libterm-readline-gnu-perl locales software-properties-common git rar
