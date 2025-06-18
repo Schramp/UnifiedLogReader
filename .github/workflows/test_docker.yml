@@ -87,3 +87,8 @@ jobs:
       run: |
         python3 ./setup.py build
         python3 ./setup.py install
+    - name: Intergration test
+      run: |
+        UnifiedLogReader.py UnifiedLogTestData/system_logs.logarchive2 UnifiedLogTestData/system_logs.logarchive2/timesync UnifiedLogTestData/system_logs.logarchive2/small /tmp/A
+        md5sum /tmp/A/logs.txt
+        head /tmp/A/logs.txt
