@@ -24,6 +24,8 @@ class TraceV3(data_format.BinaryDataFormat):
     _CHUNK_TAG_OVERSIZE = 0x6002
     _CHUNK_TAG_STATE = 0x6003
     _CHUNK_TAG_SIMPLEDUMP = 0x6004
+    _CHUNK_TAG_METADATA = 0x600B 
+    _CHUNK_TAG_COMPRESSED = 0x600D
 
     _TRACEPOINT_FLAG_HAS_ACTIVITY_ID = 0x0001
     _TRACEPOINT_FLAG_HAS_UNIQUE_PID = 0x0010
@@ -343,12 +345,12 @@ class TraceV3(data_format.BinaryDataFormat):
 
             chunk_data = file_object.read(chunk_data_size)
 
-            if tag == 0x600B:
+            if tag == self._CHUNK_TAG_METADATA:
                 meta_chunk_index = 0
                 catalog = self._ParseMetaChunk(chunk_data)
                 uncompressed_file_pos += 16 + chunk_data_size
 
-            elif tag == 0x600D:
+            elif tag == self._CHUNK_TAG_COMPRESSED:
                 uncompressed_chunk_data = self._DecompressChunkData(
                     chunk_data, chunk_data_size)
                 uncompressed_chunk_data_size = len(uncompressed_chunk_data)
