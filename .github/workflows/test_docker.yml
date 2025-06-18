@@ -53,11 +53,16 @@ jobs:
     - name: Set up container
       env:
         DEBIAN_FRONTEND: noninteractive
+        TESTFILEPASSWORD: ${{ secrets.TESTFILEPASSWORD }}
+        
       run: |
         apt-get update -q
-        apt-get install -y libterm-readline-gnu-perl locales software-properties-common
+        apt-get install -y libterm-readline-gnu-perl locales software-properties-common git rar
         locale-gen en_US.UTF-8
         ln -f -s /usr/share/zoneinfo/UTC /etc/localtime
+        git clone https://github.com/Schramp/UnifiedLogTestData.git
+        cd UnifiedLogTestData
+        rar x -hp$TESTFILEPASSWORD system_logs.logarchive_small.rar
     - name: Install dependencies
       run: |
         apt-get update -q
@@ -82,3 +87,10 @@ jobs:
       run: |
         python3 ./setup.py build
         python3 ./setup.py install
+    - name: Intergration test / Regression test
+      run: |
+        UnifiedLogReader.py UnifiedLogTestData/system_logs.logarchive2 UnifiedLogTestData/system_logs.logarchive2/timesync UnifiedLogTestData/system_logs.logarchive2/small /tmp/A
+        head /tmp/A/logs.txt
+        md5sum /tmp/A/logs.txt
+        echo expecting md5sum 18d67f6338ee1869e71c6d1262cf9fa9
+        md5sum /tmp/A/logs.txt | grep 18d67f6338ee1869e71c6d1262cf9fa9
