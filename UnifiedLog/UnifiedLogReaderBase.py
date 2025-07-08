@@ -68,6 +68,7 @@ class UnifiedLogReaderHelper(object):
             self._vfs, file_object, self._ts_list, self._uuidtext_folder_path,
             self._caches)
 
+
         # TODO: remove log_list_process_func callback from TraceV3.Parse()
         self._output_writer = output_writer
         trace_file.Parse(log_list_process_func=self._ProcessLogsList)

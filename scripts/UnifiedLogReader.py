@@ -239,7 +239,7 @@ class FileOutputWriter(object):
             time_value = UnifiedLogLib.ReadAPFSTime(log_entry.time)
 
             try:
-                if self._mode == 'ALL':
+                if self._mode == 'TSV_ALL':
                     imageUUID = '{0!s}'.format(log_entry.imageUUID).upper()
                     processImageUUID = '{0!s}'.format(
                         log_entry.processImageUUID).upper()
@@ -247,7 +247,7 @@ class FileOutputWriter(object):
                     self._file_object.write((
                         u'{}\t0x{:X}\t{}\t{}\t0x{:X}\t{}\t0x{:X}\t0x{:X}\t{}\t'
                         u'{}\t{}\t({})\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t'
-                        u'{}').format(
+                        u'{}\n').format(
                             log_entry.filename, log_entry.log_file_pos,
                             log_entry.ct, time_value, log_entry.thread,
                             log_entry.log_type, log_entry.act_id,

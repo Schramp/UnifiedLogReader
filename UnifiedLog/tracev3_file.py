@@ -1013,7 +1013,8 @@ class TraceV3(data_format.BinaryDataFormat):
                 try:
                     plist = biplist.readPlistFromString(data)
                     log_msg = str(plist)
-                except (ImportError, NameError, UnboundLocalError):
+                except (ImportError, NameError, UnboundLocalError) as e:
+                    print(e)
                     raise
 
                 # TODO: refactor wide exception.
@@ -1357,8 +1358,9 @@ class TraceV3(data_format.BinaryDataFormat):
             try:
                 chars = raw_data.decode('utf8').rstrip('\x00')
             except UnicodeDecodeError as ex:
-                logger.error('Error decoding utf8 in log @ 0x{:X}, data was "{}", error was {}'.format(log_file_pos, binascii.hexlify(raw_data), str(ex)))
-                chars = ''
+                logger.error('Error decoding utf8 in log @ 0x{:X}, custom_specifier was {}, data was "{}", error was {}'
+                             .format(log_file_pos, custom_specifier, binascii.hexlify(raw_data), str(ex)))
+                chars = binascii.hexlify(raw_data)
             chars = ('%' + (flags_width_precision if flags_width_precision.find('*') == -1 else '') + "s") % chars
         msg += chars
         return msg
@@ -1452,7 +1454,22 @@ class TraceV3(data_format.BinaryDataFormat):
 
     def _handle_object(self, hit, data_item, log_file_pos, flags_width_precision, custom_specifier):
         # %@ is a utf8 representation of object
+        if custom_specifier:
+            handler = self._specifier_handlers.get(custom_specifier, None)
+            if handler:
+                return handler(self, hit, data_item, log_file_pos, flags_width_precision, custom_specifier)
+            else:
+                # If no custom specifier handler is found, treat it as a string
+                logger.info("Unknown object type '{}' in log @ 0x{:X}".format(custom_specifier, log_file_pos))
+
         return self._handle_string(hit, data_item, log_file_pos, flags_width_precision, custom_specifier)
+
+    def _handle_mask_hash(self, hit, data_item, log_file_pos, flags_width_precision, custom_specifier):
+        # {private, mask.hash} is a special case for mask hash
+        data_type, data_size, raw_data = data_item
+        if data_size == 0:
+            return '<private>'
+        return f"""< mask.hash: '{base64.b64encode(raw_data).decode("ascii")}' >"""
 
     # Table mapping format specifiers to handler functions
     _specifier_handlers = {
@@ -1480,6 +1497,8 @@ class TraceV3(data_format.BinaryDataFormat):
         '@': _handle_object,
         'P': _handle_custom_pointer,
         'p': _handle_pointer,
+        '{signpost.telemetry:string1}': _handle_string,
+        '{private, mask.hash}': _handle_mask_hash,
     }
 
     def RecreateMsgFromFmtStringAndData(self, format_str, data, log_file_pos):
@@ -1509,6 +1528,7 @@ class TraceV3(data_format.BinaryDataFormat):
                 data_type = data_item[0]
                 data_size = data_item[1]
                 raw_data  = data_item[2]
+                """"
                 if custom_specifier and custom_specifier.find('mask.hash') > 0:
                     raw_data = b"< mask.hash: '" + base64.b64encode(raw_data) + b"' >"
                 if (specifier not in ('p', 'P', 's', 'S')) and (flags_width_precision.find('*') >= 0):
@@ -1526,6 +1546,7 @@ class TraceV3(data_format.BinaryDataFormat):
                         data_type = data_item[0]
                         data_size = data_item[1]
                         raw_data  = data_item[2]
+"""
                 handler = self._specifier_handlers.get(specifier)
                 if handler:
                     msg += handler(self, hit, data_item, log_file_pos, flags_width_precision, custom_specifier)
