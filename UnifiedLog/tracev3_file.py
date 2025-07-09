@@ -8,7 +8,7 @@ import re
 import struct
 from uuid import UUID
 
-import biplist
+import plistlib
 
 from UnifiedLog import data_format
 from UnifiedLog import dsc_file
@@ -22,9 +22,9 @@ class TraceV3(data_format.BinaryDataFormat):
 
     _CHUNK_TAG_FIREHOSE = 0x6001
     _CHUNK_TAG_OVERSIZE = 0x6002
-    _CHUNK_TAG_STATE = 0x6003
+    _CHUNK_TAG_STATEDUMP = 0x6003
     _CHUNK_TAG_SIMPLEDUMP = 0x6004
-    _CHUNK_TAG_METADATA = 0x600B 
+    _CHUNK_TAG_METADATA = 0x600B
     _CHUNK_TAG_COMPRESSED = 0x600D
 
     _TRACEPOINT_FLAG_HAS_ACTIVITY_ID = 0x0001
@@ -108,7 +108,7 @@ class TraceV3(data_format.BinaryDataFormat):
                     uncompressed += chunk_data[comp_start + 8:comp_start + 8 + uncompressed_size]
                     comp_start += 8 + uncompressed_size
                 else:
-                    logger.error('Unknown compression value {} @ 0x{:X} - {}'.format(binascii.hexlify(comp_header), begin_pos + comp_start, comp_header))
+                    logger.error('Unknown compression value {} - {}'.format(binascii.hexlify(comp_header), comp_header))
                     break
                 comp_header = chunk_data[comp_start:comp_start + 4]
         else:
@@ -1011,9 +1011,11 @@ class TraceV3(data_format.BinaryDataFormat):
             data = chunk_data[248:248 + data_len]
             if data_type == 1: # plist  # serialized NS/CF object [Apple]
                 try:
-                    plist = biplist.readPlistFromString(data)
+                    #plist = biplist.readPlistFromString(data)
+                    plist = plistlib.loads(data)
                     log_msg = str(plist)
-                except (ImportError, NameError, UnboundLocalError):
+                except (ImportError, NameError, UnboundLocalError) as e:
+                    print(e)
                     raise
 
                 # TODO: refactor wide exception.
@@ -1300,29 +1302,225 @@ class TraceV3(data_format.BinaryDataFormat):
         #    pass #logger.debug("Extra Data bytes ({}) @ {} ".format(buf_size-pos_debug, pos_debug) + " ## " + binascii.hexlify(buffer[pos_debug:]))
         return data
 
+    def _handle_integer(self, hit, data_item, log_file_pos, flags_width_precision, custom_specifier):
+        specifier = hit.group(4)
+        data_type, data_size, raw_data = data_item
+        number = 0
+        msg = ''
+        if data_size == 0:
+            if data_type & 0x1:
+                msg += '<private>'
+            else:
+                logger.error('unknown err, size=0, data_type=0x{:X}'.format(data_type))
+        else:
+            if specifier in ('d', 'D'):
+                specifier = 'd'
+                if   data_size == 1: number = struct.unpack("<b", raw_data)[0]
+                elif data_size == 4: number = struct.unpack("<i", raw_data)[0]
+                elif data_size == 8: number = struct.unpack("<q", raw_data)[0]
+                else: logger.error('Unknown length ({}) for number '.format(data_size))
+            else:
+                if   data_size == 1: number = struct.unpack("<B", raw_data)[0]
+                elif data_size == 4: number = struct.unpack("<I", raw_data)[0]
+                elif data_size == 8: number = struct.unpack("<Q", raw_data)[0]
+                else: logger.error('Unknown length ({}) for number '.format(data_size))
+                if   specifier == 'U': specifier = 'u'
+                elif specifier == 'O': specifier = 'o'
+            msg += ('%' + flags_width_precision + specifier) % number
+        return msg
+
+    def _handle_float(self, hit, data_item, log_file_pos, flags_width_precision, custom_specifier):
+        specifier = hit.group(4)
+        data_type, data_size, raw_data = data_item
+        number = 0
+        msg = ''
+        if data_size == 0:
+            if data_type & 0x1:
+                msg += '<private>'
+            else:
+                logger.error('unknown err, size=0, data_type=0x{:X}'.format(data_type))
+        else:
+            if   data_size == 8: number = struct.unpack("<d", raw_data)[0]
+            elif data_size == 4: number = struct.unpack("<f", raw_data)[0]
+            else: logger.error('Unknown length ({}) for float/double '.format(data_size))
+            msg += ('%' + flags_width_precision + specifier) % number
+        return msg
+
+    def _handle_string(self, hit, data_item, log_file_pos, flags_width_precision, custom_specifier):
+        data_type, data_size, raw_data = data_item
+        msg = ''
+        chars = ''
+        if data_size == 0:
+            if data_type == 0x40:
+                chars = '(null)'
+            elif data_type & 0x1:
+                chars = '<private>'
+        else:
+            try:
+                chars = raw_data.decode('utf8').rstrip('\x00')
+            except UnicodeDecodeError as ex:
+                logger.error('Error decoding utf8 in log @ 0x{:X}, custom_specifier was {}, data was "{}", error was {}'
+                             .format(log_file_pos, custom_specifier, binascii.hexlify(raw_data), str(ex)))
+                chars = binascii.hexlify(raw_data)
+            chars = ('%' + (flags_width_precision if flags_width_precision.find('*') == -1 else '') + "s") % chars
+        msg += chars
+        return msg
+
+    def _handle_pointer(self, hit, data_item, log_file_pos, flags_width_precision, custom_specifier):
+        data_type, data_size, raw_data = data_item
+        msg = ''
+        if data_size == 0:
+            if data_type & 0x1:
+                msg += '<private>'
+            else:
+                logger.error('unknown err, size=0, data_type=0x{:X} in log @ 0x{:X}'.format(data_type, log_file_pos))
+        else:
+            if   data_size == 8: number = struct.unpack("<Q", raw_data)[0]
+            elif data_size == 4: number = struct.unpack("<I", raw_data)[0]
+            else: logger.error('Unknown length ({}) for number in log @ 0x{:X}'.format(data_size, log_file_pos))
+            msg += '0x' + ('%' + flags_width_precision + 'x') % number
+        return msg
+
+    def _handle_custom_pointer(self, hit, data_item, log_file_pos, flags_width_precision, custom_specifier):
+        data_type, data_size, raw_data = data_item
+        msg = ''
+        if not custom_specifier:
+            msg += hit.group(0)
+            logger.info("Unknown data object with no custom specifier in log @ 0x{:X}".format(log_file_pos))
+            return msg
+        if data_size == 0:
+            if data_type & 0x1:
+                msg += '<private>'
+            return msg
+        if custom_specifier.find('uuid_t') > 0:
+            uuid = UUID(bytes=raw_data)
+            msg += str(uuid).upper()
+        elif custom_specifier.find('odtypes:mbr_details') > 0:
+            unk = raw_data[0]
+            if unk == 0x44:
+                group, pos = self._ReadCStringAndEndPos(raw_data[1:], len(raw_data))
+                pos += 2
+                domain = self._ReadCString(raw_data[pos:], len(raw_data) - pos)
+                msg += 'group: {}@{}'.format(group, domain)
+            elif unk == 0x23:
+                uid = struct.unpack("<I", raw_data[1:5])[0]
+                domain = self._ReadCString(raw_data[5:], len(raw_data) - 5)
+                msg += 'user: {}@{}'.format(uid, domain)
+            else:
+                logger.error("Unknown value for mbr_details found 0x{:X} in log @ 0x{:X}".format(unk, log_file_pos))
+        elif custom_specifier.find('odtypes:nt_sid_t') > 0:
+            msg += self._ReadNtSid(raw_data)
+        elif custom_specifier.find('location:SqliteResult') > 0:
+            number = struct.unpack("<I", raw_data)[0]
+            if number >= 0 and number <= 28:
+                error_codes = [ 'SQLITE_OK','SQLITE_ERROR','SQLITE_INTERNAL','SQLITE_PERM','SQLITE_ABORT','SQLITE_BUSY',
+                                'SQLITE_LOCKED','SQLITE_NOMEM','SQLITE_READONLY','SQLITE_INTERRUPT','SQLITE_IOERR',
+                                'SQLITE_CORRUPT','SQLITE_NOTFOUND','SQLITE_FULL','SQLITE_CANTOPEN','SQLITE_PROTOCOL',
+                                'SQLITE_EMPTY','SQLITE_SCHEMA','SQLITE_TOOBIG','SQLITE_CONSTRAINT','SQLITE_MISMATCH',
+                                'SQLITE_MISUSE','SQLITE_NOLFS','SQLITE_AUTH','SQLITE_FORMAT','SQLITE_RANGE',
+                                'SQLITE_NOTADB','SQLITE_NOTICE','SQLITE_WARNING']
+                msg += error_codes[number]
+            elif number == 100: msg += 'SQLITE_ROW'
+            elif number == 101: msg += 'SQLITE_DONE'
+            else:
+                msg += str(number) + " - unknown sqlite result code"
+        elif custom_specifier.find('network:sockaddr') > 0:
+            size, family = struct.unpack("<BB", raw_data[0:2])
+            if family == 0x1E:
+                port, flowinfo = struct.unpack("<HI", raw_data[2:8])
+                ipv6 = struct.unpack(">8H", raw_data[8:24])
+                ipv6_str = '{:X}:{:X}:{:X}:{:X}:{:X}:{:X}:{:X}:{:X}'.format(*ipv6)
+                msg += ipaddress.ip_address(ipv6_str).compressed
+            elif family == 0x02:
+                port = struct.unpack("<H", raw_data[2:4])
+                ipv4 = struct.unpack("<BBBB", raw_data[4:8])
+                ipv4_str = '{}.{}.{}.{}'.format(*ipv4)
+                msg += ipv4_str
+            elif size == 0:
+                pass
+            else:
+                logger.error("Unknown sock family value 0x{:X} size 0x{:X} in log @ 0x{:X}".format(family, size, log_file_pos))
+        elif custom_specifier.find('_CLClientManagerStateTrackerState') > 0:
+            msg += self._Read_CLClientManagerStateTrackerState(raw_data)
+        elif custom_specifier.find('mask.hash') > 0:
+            msg += raw_data.decode('utf8').rstrip('\x00')
+        else:
+            msg += hit.group(0)
+            logger.info("Unknown custom data object type '{}' data size=0x{:X} in log @ 0x{:X}".format(custom_specifier, len(raw_data), log_file_pos))
+        return msg
+
+    def _handle_char(self, hit, data_item, log_file_pos, flags_width_precision, custom_specifier):
+        # %c, %C, %s, %S, %@ all handled as string
+        return self._handle_string(hit, data_item, log_file_pos, flags_width_precision, custom_specifier)
+
+    def _handle_object(self, hit, data_item, log_file_pos, flags_width_precision, custom_specifier):
+        # %@ is a utf8 representation of object
+        if custom_specifier:
+            handler = self._specifier_handlers.get(custom_specifier, None)
+            if handler:
+                return handler(self, hit, data_item, log_file_pos, flags_width_precision, custom_specifier)
+            else:
+                # If no custom specifier handler is found, treat it as a string
+                logger.info("Unknown object type '{}' in log @ 0x{:X}".format(custom_specifier, log_file_pos))
+
+        return self._handle_string(hit, data_item, log_file_pos, flags_width_precision, custom_specifier)
+
+    def _handle_mask_hash(self, hit, data_item, log_file_pos, flags_width_precision, custom_specifier):
+        # {private, mask.hash} is a special case for mask hash
+        data_type, data_size, raw_data = data_item
+        if data_size == 0:
+            return '<private>'
+        return f"""< mask.hash: '{base64.b64encode(raw_data).decode("ascii")}' >"""
+
+    # Table mapping format specifiers to handler functions
+    _specifier_handlers = {
+        'd': _handle_integer,
+        'D': _handle_integer,
+        'i': _handle_integer,
+        'u': _handle_integer,
+        'U': _handle_integer,
+        'x': _handle_integer,
+        'X': _handle_integer,
+        'o': _handle_integer,
+        'O': _handle_integer,
+        'f': _handle_float,
+        'e': _handle_float,
+        'E': _handle_float,
+        'g': _handle_float,
+        'G': _handle_float,
+        'a': _handle_float,
+        'A': _handle_float,
+        'F': _handle_float,
+        'c': _handle_char,
+        'C': _handle_char,
+        's': _handle_string,
+        'S': _handle_string,
+        '@': _handle_object,
+        'P': _handle_custom_pointer,
+        'p': _handle_pointer,
+        '{signpost.telemetry:string1}': _handle_string,
+        '{private, mask.hash}': _handle_mask_hash,
+    }
+
     def RecreateMsgFromFmtStringAndData(self, format_str, data, log_file_pos):
         msg = ''
-        format_str_for_regex = format_str.replace('%%', '~') # %% is to be considered literal % but will interfere with our regex, so replace it
-        format_str = format_str.replace('%%', '%')           # %% replaced with % in original. Since we aren't tokenizing, we use this hack
+        format_str_for_regex = format_str.replace('%%', '~')
+        format_str = format_str.replace('%%', '%')
         len_format_str = len(format_str)
         data_count = len(data)
-        format_str_consumed = 0 # No. of bytes read
+        format_str_consumed = 0
         last_hit_end = 0
         index = 0
         for hit in self.regex.finditer(format_str_for_regex):
-            #logger.debug('{} {} all={}  {}  {} {} {}'.format(hit.start(), hit.end(), hit.group(0), hit.group(1), hit.group(2), hit.group(3), hit.group(4)))
             hit_len = hit.end() - hit.start()
             last_hit_end = hit.end()
-            msg += format_str[format_str_consumed : hit.start()] # slice from end of last hit to begin of new hit
+            msg += format_str[format_str_consumed : hit.start()]
             format_str_consumed = last_hit_end
-            # Now add data from this hit
             if index >= len(data):
-                msg += '<decode: missing data>' # Message provided by 'log' program for missing data
+                msg += '<decode: missing data>'
                 logger.error('missing data for log @ 0x{:X}'.format(log_file_pos))
                 break
             data_item = data[index]
-            # msg += data from this hit
-            # data_item = [type, size, raw_data]
             try:
                 custom_specifier = hit.group(1)
                 flags_width_precision = hit.group(2).replace('\'', '')
@@ -1331,175 +1529,39 @@ class TraceV3(data_format.BinaryDataFormat):
                 data_type = data_item[0]
                 data_size = data_item[1]
                 raw_data  = data_item[2]
-                if custom_specifier and custom_specifier.find('mask.hash')>0:
+                """"
+                if custom_specifier and custom_specifier.find('mask.hash') > 0:
                     raw_data = b"< mask.hash: '" + base64.b64encode(raw_data) + b"' >"
-                if (specifier not in ('p', 'P', 's', 'S')) and (flags_width_precision.find('*') >= 0): # Width and/or precision is now a variable!
+                if (specifier not in ('p', 'P', 's', 'S')) and (flags_width_precision.find('*') >= 0):
                     logger.debug('Found * , data_type is {}, exp={} for log @ 0x{:X}'.format(data_type, flags_width_precision + specifier, log_file_pos))
                     var_count = flags_width_precision.count('*')
                     for i in range(0, var_count):
                         if   data_size == 1: number = struct.unpack("<b", raw_data)[0]
                         elif data_size == 4: number = struct.unpack("<i", raw_data)[0]
                         elif data_size == 8: number = struct.unpack("<q", raw_data)[0]
-                        else: 
+                        else:
                             logger.error('data_size is {} for log @ 0x{:X}'.format(data_size, log_file_pos))
                         flags_width_precision = flags_width_precision.replace('*', str(number), 1)
-                        # fetch next item as data was consumed by width/precision
                         index += 1
                         data_item = data[index]
                         data_type = data_item[0]
                         data_size = data_item[1]
                         raw_data  = data_item[2]
-                
-                ## In below code , length_modifier has been removed from format string, let python string formatter handle rest
-                ## It has the same format, except for flags, where single-qoute is not supported in python.
-                if specifier in ('d', 'D', 'i', 'u', 'U', 'x', 'X', 'o', 'O'): # uint32 according to spec! but can be 4 or 8 bytes
-                    number = 0
-                    if data_size == 0: # size
-                        if data_type & 0x1:
-                            msg += '<private>'
-                        else:
-                            logger.error('unknown err, size=0, data_type=0x{:X}'.format(data_type))
-                    else: # size should be 4 or 8
-                        if specifier in ('d', 'D'): # signed int32 or int64
-                            specifier = 'd'  # Python does not support 'D'
-                            if   data_size == 1: number = struct.unpack("<b", raw_data)[0]
-                            elif data_size == 4: number = struct.unpack("<i", raw_data)[0]
-                            elif data_size == 8: number = struct.unpack("<q", raw_data)[0]
-                            else: logger.error('Unknown length ({}) for number '.format(data_size))
-                        else:
-                            if   data_size == 1: number = struct.unpack("<B", raw_data)[0]
-                            elif data_size == 4: number = struct.unpack("<I", raw_data)[0]
-                            elif data_size == 8: number = struct.unpack("<Q", raw_data)[0]
-                            else: logger.error('Unknown length ({}) for number '.format(data_size))
-                            if   specifier == 'U': specifier = 'u'  # Python does not support 'U'
-                            elif specifier == 'O': specifier = 'o'  # Python does not support 'O'
-                        msg += ('%'+ flags_width_precision + specifier) % number
-                elif specifier in ('f', 'e', 'E', 'g', 'G', 'a', 'A', 'F'): # double 64 bit (or 32 bit float if 'lf')
-                    number = 0
-                    if data_size == 0: # size
-                        if data_type & 0x1:
-                            msg += '<private>'
-                        else:
-                            logger.error('unknown err, size=0, data_type=0x{:X}'.format(data_type))
-                    else:
-                        if   data_size == 8: number = struct.unpack("<d", raw_data)[0]
-                        elif data_size == 4: number = struct.unpack("<f", raw_data)[0]
-                        else: logger.error('Unknown length ({}) for float/double '.format(data_size))
-                        msg += ('%'+ flags_width_precision + specifier) % number
-                elif specifier in ('c', 'C', 's', 'S', '@'):  # c is Single char but stored as 4 bytes
-                    # %C & %S are unicode char, but everything in log file would be encoded as utf8, so should be the same
-                    # %@ is a utf8 representation of object
-                    chars = ''
-                    if data_size == 0:
-                        if data_type == 0x40:
-                            chars = '(null)'
-                        elif data_type & 0x1:
-                            chars = '<private>'
-                    else:
-                        try:
-                            chars = raw_data.decode('utf8').rstrip('\x00')
-                        except UnicodeDecodeError as ex:
-                            logger.error('Error decoding utf8 in log @ 0x{:X}, data was "{}", error was {}'.format(log_file_pos, binascii.hexlify(raw_data), str(ex)))
-                            chars = ''
-                        chars = ('%'+ (flags_width_precision if flags_width_precision.find('*')==-1 else '')  + "s") % chars # Python does not like '%.*s'
-                    msg += chars
-                elif specifier == 'P':  # Pointer to data of different types!
-                    if not custom_specifier:
-                        msg += hit.group(0)
-                        logger.info("Unknown data object with no custom specifier in log @ 0x{:X}".format(log_file_pos))
-                        index += 1
-                        continue
-                    if data_size == 0:
-                        if data_type & 0x1:
-                            msg += '<private>'
-                        index += 1
-                        continue
-
-                    if custom_specifier.find('uuid_t') > 0:
-                        if data_size == 0: # size
-                            logger.error('unknown err, size=0, data_type=0x{:X} in log @ 0x{:X}'.format(data_type, log_file_pos))
-                        else:
-                            uuid = UUID(bytes=raw_data)
-                            msg += str(uuid).upper()
-                    elif custom_specifier.find('odtypes:mbr_details') > 0:
-                        unk = raw_data[0]
-                        if unk == 0x44: # 'D'
-                            group, pos = self._ReadCStringAndEndPos(raw_data[1:], len(raw_data))
-                            pos += 2
-                            domain = self._ReadCString(raw_data[pos:], len(raw_data) - pos)
-                            msg += 'group: {}@{}'.format(group, domain)
-                        elif unk == 0x23: # '#'
-                            uid = struct.unpack("<I", raw_data[1:5])[0]
-                            domain = self._ReadCString(raw_data[5:], len(raw_data) - 5)
-                            msg += 'user: {}@{}'.format(uid, domain)
-                        else:
-                            logger.error("Unknown value for mbr_details found 0x{:X} in log @ 0x{:X}".format(unk, log_file_pos))
-                    elif custom_specifier.find('odtypes:nt_sid_t') > 0:
-                        msg += self._ReadNtSid(raw_data)
-                    elif custom_specifier.find('location:SqliteResult') > 0:
-                        number = struct.unpack("<I", raw_data)[0]
-                        if number >= 0 and number <=28:
-                            error_codes = [ 'SQLITE_OK','SQLITE_ERROR','SQLITE_INTERNAL','SQLITE_PERM','SQLITE_ABORT','SQLITE_BUSY',
-                                            'SQLITE_LOCKED','SQLITE_NOMEM','SQLITE_READONLY','SQLITE_INTERRUPT','SQLITE_IOERR',
-                                            'SQLITE_CORRUPT','SQLITE_NOTFOUND','SQLITE_FULL','SQLITE_CANTOPEN','SQLITE_PROTOCOL',
-                                            'SQLITE_EMPTY','SQLITE_SCHEMA','SQLITE_TOOBIG','SQLITE_CONSTRAINT','SQLITE_MISMATCH',
-                                            'SQLITE_MISUSE','SQLITE_NOLFS','SQLITE_AUTH','SQLITE_FORMAT','SQLITE_RANGE',
-                                            'SQLITE_NOTADB','SQLITE_NOTICE','SQLITE_WARNING']
-                            msg += error_codes[number]
-                        elif number == 100: msg += 'SQLITE_ROW'
-                        elif number == 101: msg += 'SQLITE_DONE'
-                        else:
-                            msg += str(number) + " - unknown sqlite result code"
-                            #https://www.sqlite.org/c3ref/c_abort.html sqlite result codes
-                    elif custom_specifier.find('network:sockaddr') > 0:
-                        size, family = struct.unpack("<BB", raw_data[0:2])
-                        if family == 0x1E: # AF_INET6 ipv6
-                            port, flowinfo = struct.unpack("<HI", raw_data[2:8])
-                            ipv6 = struct.unpack(">8H", raw_data[8:24])
-                            ipv6_str = '{:X}:{:X}:{:X}:{:X}:{:X}:{:X}:{:X}:{:X}'.format(ipv6[0],ipv6[1],ipv6[2],ipv6[3],ipv6[4],ipv6[5],ipv6[6],ipv6[7])#must be unicode
-                            msg += ipaddress.ip_address(ipv6_str).compressed
-                        elif family == 0x02: # AF_INET ipv4
-                            port = struct.unpack("<H", raw_data[2:4])
-                            ipv4 = struct.unpack("<BBBB", raw_data[4:8])
-                            ipv4_str = '{}.{}.{}.{}'.format(ipv4[0],ipv4[1],ipv4[2],ipv4[3])
-                            msg += ipv4_str # TODO- test this, not seen yet!
-                        elif size == 0:
-                            pass
-                        else:
-                            logger.error("Unknown sock family value 0x{:X} size 0x{:X} in log @ 0x{:X}".format(family, size, log_file_pos))
-                    # elif custom_specifier.find('_CLDaemonStatusStateTrackerState') > 0:
-                    #     msg += Read_CLDaemonStatusStateTrackerState(raw_data)
-                    elif custom_specifier.find('_CLClientManagerStateTrackerState') > 0:
-                        msg += self._Read_CLClientManagerStateTrackerState(raw_data)
-                    elif custom_specifier.find('mask.hash')>0 :
-                        msg += raw_data.decode('utf8').rstrip('\x00')
-                    else:
-                        msg += hit.group(0)
-                        logger.info("Unknown custom data object type '{}' data size=0x{:X} in log @ 0x{:X}".format(custom_specifier, len(raw_data), log_file_pos))
-                        pass #TODO
-                elif specifier == 'p':  # Should be 8bytes to be displayed as uint 32/64 in hex lowercase no leading zeroes
-                    number = ''
-                    if data_size == 0: # size
-                        if data_type & 0x1:
-                            msg += '<private>'
-                        else:
-                            logger.error('unknown err, size=0, data_type=0x{:X} in log @ 0x{:X}'.format(data_type, log_file_pos))
-                    else: # size should be 8 or 4
-                        if   data_size == 8: number = struct.unpack("<Q", raw_data)[0]
-                        elif data_size == 4: number = struct.unpack("<I", raw_data)[0]
-                        else: logger.error('Unknown length ({}) for number in log @ 0x{:X}'.format(data_size, log_file_pos))
-                        msg += '0x' + ('%' + flags_width_precision + 'x') % number
+"""
+                handler = self._specifier_handlers.get(specifier)
+                if handler:
+                    msg += handler(self, hit, data_item, log_file_pos, flags_width_precision, custom_specifier)
+                else:
+                    msg += hit.group(0)
+                    logger.info("Unknown format specifier '%s' in log @ 0x{:X}".format(specifier, log_file_pos))
             except (ImportError, NameError, UnboundLocalError):
                 raise
-
-            # TODO: refactor wide exception.
             except Exception as ex:
                 logger.exception('exception for log @ 0x{:X}'.format(log_file_pos))
                 msg += "E-R-R-O-R"
             index += 1
 
         if format_str_consumed < len_format_str:
-            # copy remaining bytes from end of last hit to end of strings
             msg += format_str[last_hit_end:]
         elif format_str_consumed > len_format_str:
             logger.error('format_str_consumed ({}) > len_format_str ({})'.format(format_str_consumed, len_format_str))
@@ -1567,7 +1629,7 @@ class TraceV3(data_format.BinaryDataFormat):
             elif tag == self._CHUNK_TAG_OVERSIZE:
                 self._ParseOversizeChunkData(chunk_data[pos:end_pos], debug_file_pos+pos)
 
-            elif tag == self._CHUNK_TAG_STATE:
+            elif tag == self._CHUNK_TAG_STATEDUMP:
                 self._ParseStateChunkData(chunk_data[pos:end_pos], catalog, proc_info, logs, debug_file_pos+pos)
 
             elif tag == self._CHUNK_TAG_SIMPLEDUMP:
