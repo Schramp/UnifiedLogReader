@@ -51,8 +51,7 @@ setup(
             'LICENSE.md', 'README.md']),
     ],
     install_requires=[
-        "biplist >= 1.0.3",
-        "ipaddress",
+            "ipaddress",
         "lz4 >= 0.10.0"
     ],
 )

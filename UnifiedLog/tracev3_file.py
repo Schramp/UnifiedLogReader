@@ -8,7 +8,7 @@ import re
 import struct
 from uuid import UUID
 
-import biplist
+import plistlib
 
 from UnifiedLog import data_format
 from UnifiedLog import dsc_file
@@ -1011,7 +1011,8 @@ class TraceV3(data_format.BinaryDataFormat):
             data = chunk_data[248:248 + data_len]
             if data_type == 1: # plist  # serialized NS/CF object [Apple]
                 try:
-                    plist = biplist.readPlistFromString(data)
+                    #plist = biplist.readPlistFromString(data)
+                    plist = plistlib.loads(data)
                     log_msg = str(plist)
                 except (ImportError, NameError, UnboundLocalError) as e:
                     print(e)
