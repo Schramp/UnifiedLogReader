@@ -18,6 +18,8 @@ jobs:
           toxenv: 'py310'
         - python-version: '3.11'
           toxenv: 'py311'
+        - python-version: '3.13'
+          toxenv: 'py313'
     container:
       image: ubuntu:22.04
     steps:
@@ -58,6 +60,8 @@ jobs:
         include:
         - python-version: '3.11'
           toxenv: 'py311,coverage'
+        - python-version: '3.13'
+          toxenv: 'py313,coverage'
     container:
       image: ubuntu:22.04
     steps:
