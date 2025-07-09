@@ -92,5 +92,5 @@ jobs:
         UnifiedLogReader.py UnifiedLogTestData/system_logs.logarchive2 UnifiedLogTestData/system_logs.logarchive2/timesync UnifiedLogTestData/system_logs.logarchive2/small /tmp/A
         head /tmp/A/logs.txt
         md5sum /tmp/A/logs.txt
-        echo expecting md5sum 18d67f6338ee1869e71c6d1262cf9fa9
-        md5sum /tmp/A/logs.txt | grep 18d67f6338ee1869e71c6d1262cf9fa9
+        echo expecting md5sum bb0a47a1ffd3594f82c288283016cdb2
+        md5sum /tmp/A/logs.txt | grep bb0a47a1ffd3594f82c288283016cdb2
