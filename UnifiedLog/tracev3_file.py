@@ -999,6 +999,8 @@ class TraceV3(data_format.BinaryDataFormat):
         ttl = 0 # FIX ME before some refactoring this probably was filled
 
         # type 1 does not have any strings, it is blank or random bytes
+        obj_type_str_1 = ""
+        obj_type_str_2 = ""
         if data_type != 1:
             obj_type_str_1 = self._ReadCString(chunk_data[56:120])
             obj_type_str_2 = self._ReadCString(chunk_data[120:184])
@@ -1023,12 +1025,14 @@ class TraceV3(data_format.BinaryDataFormat):
                     logger.exception('Problem reading plist from log @ 0x{:X} ct={}'.format(log_file_pos, ct))
 
             elif data_type == 2:  #custom object, not being read by log utility in many cases!
+                log_msg = f"{obj_type_str_1} {obj_type_str_2} data {binascii.hexlify(data).decode('utf8')}"
                 logger.error('Did not read data of type {}, t1={}, t2={}, length=0x{:X} from log @ 0x{:X} ct={}'.format(data_type, obj_type_str_1, obj_type_str_2, data_len, log_file_pos, ct))
 
             elif data_type == 3:  # custom [Apple] #TODO - read non-plist data
                 if obj_type_str_1 == 'location' and obj_type_str_2 == '_CLClientManagerStateTrackerState':
                     log_msg = self._Read_CLClientManagerStateTrackerState(data)
                 else:
+                    log_msg = f"{obj_type_str_1} {obj_type_str_2} data {binascii.hexlify(data).decode('utf8')}"
                     logger.error('Did not read data of type {}, t1={}, t2={}, length=0x{:X} from log @ 0x{:X} ct={}'.format(data_type, obj_type_str_1, obj_type_str_2, data_len, log_file_pos, ct))
 
             else:
@@ -1498,6 +1502,15 @@ class TraceV3(data_format.BinaryDataFormat):
         '@': _handle_object,
         'P': _handle_custom_pointer,
         'p': _handle_pointer,
+        '{public}': _handle_string,
+        '{private}': _handle_string,
+        '{public, signpost:metrics}': _handle_string,
+        '{signpost.description:attribute}': _handle_string,
+        '{public,signpost.description:attribute}': _handle_string,
+        '{public,signpost.telemetry:string1,name=ProxiedBundleID}': _handle_string,
+        '{public, name=pipeline, signpost.telemetry:string1}': _handle_string,
+        '{signpost.telemetry:string1,public}': _handle_string,
+        '{signpost.telemetry:string2,public}': _handle_string,
         '{signpost.telemetry:string1}': _handle_string,
         '{private, mask.hash}': _handle_mask_hash,
     }
