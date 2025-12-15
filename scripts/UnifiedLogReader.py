@@ -38,6 +38,7 @@
 import argparse
 import logging
 import io
+import json
 import os
 import sqlite3
 import sys
@@ -246,7 +247,7 @@ class FileOutputWriter(object):
 
                     self._file_object.write((
                         u'{}\t0x{:X}\t{}\t{}\t0x{:X}\t{}\t0x{:X}\t0x{:X}\t{}\t'
-                        u'{}\t{}\t({})\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t'
+                        u'{}\t{}\t({})\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t'
                         u'{}\n').format(
                             log_entry.filename, log_entry.log_file_pos,
                             log_entry.ct, time_value, log_entry.thread,
@@ -289,6 +290,97 @@ class FileOutputWriter(object):
             except (IOError, OSError):
                 logger.exception('Error writing to output file')
 
+class JsonOutputWriter(object):
+    '''Output writer that writes JSON output to a file.'''
+
+    def __init__(self, path, localtime=False):
+        '''Initializes a file output writer.
+
+        Args:
+          path (str): path of the file.
+
+        '''
+        super(JsonOutputWriter, self).__init__()
+        self._file_object = None
+        self._path = path
+        self._localtime = localtime
+
+    def Close(self):
+        '''Closes the unified logs reader.'''
+        if self._file_object:
+            self._file_object.close()
+            self._file_object = None
+
+        self._path = None
+
+    def Open(self):
+        '''Opens the output writer.
+
+        Returns:
+          bool: True if successful or False on error.
+        '''
+        logger.info('Creating output file %s', self._path)
+
+        try:
+            self._file_object = io.open(self._path, 'wt', encoding='utf-8')
+        except (IOError, OSError):
+            logger.exception('Failed to open file %s', self._path)
+            return False
+        return True
+
+    def WriteLogEntries(self, logs):
+        '''Writes several Unified Log entries.
+
+        Args:
+          logs (???): list of log entries:
+        '''
+        for log in logs:
+            self.WriteLogEntry(log)
+
+    def WriteLogEntry(self, log_entry):
+        '''Writes a Unified Log entry.
+
+        Args:
+          log (LogEntry): log entry.
+        '''
+        if self._file_object:
+            time_value = UnifiedLogLib.ReadAPFSTime(log_entry.time)
+
+            try:
+                imageUUID = '{0!s}'.format(log_entry.imageUUID).upper()
+                processImageUUID = '{0!s}'.format(
+                    log_entry.processImageUUID).upper()
+
+                self._file_object.write(
+                    json.dumps(
+                        {'filename': log_entry.filename,
+                         'log_file_pos': log_entry.log_file_pos,
+                         'ct': log_entry.ct, 
+                         'time_value': time_value.strftime("%Y-%m-%d %H:%M:%S.%f"),
+                         'thread': log_entry.thread,
+                         'log_type': log_entry.log_type,
+                         'act_id': log_entry.act_id,
+                         'parent_activity_identifier': log_entry.parentActivityIdentifier,
+                         'pid': log_entry.pid,
+                         'euid': log_entry.euid,
+                         'ttl': log_entry.ttl,
+                         'p_name': log_entry.p_name,
+                         'lib': log_entry.lib,
+                         'sub_sys': log_entry.sub_sys,
+                         'cat': log_entry.cat,
+                         'signpost_name': log_entry.signpost_name,
+                         'signpost_string': log_entry.signpost_string,
+                         'image_offset': log_entry.imageOffset,
+                         'image_uuid': imageUUID,
+                         'process_image_uuid': processImageUUID,
+                         'sender_image_path': log_entry.senderImagePath,
+                         'process_image_path': log_entry.processImagePath,
+                         'log_msg': log_entry.log_msg}
+                    ) + '\n'
+                )
+            except (IOError, OSError):
+                logger.exception('Error writing to output file')
+
 
 def Main():
     '''The main program function.
@@ -312,9 +404,9 @@ def Main():
 
     arg_parser.add_argument(
          '-f', '--output_format', action='store', choices=(
-             'SQLITE', 'TSV_ALL', 'LOG_DEFAULT'),
+             'SQLITE', 'TSV_ALL', 'LOG_DEFAULT', 'JSON'),
          metavar='FORMAT', default='LOG_DEFAULT', help=(
-             'Output format: SQLITE, TSV_ALL, LOG_DEFAULT  (Default is LOG_DEFAULT)'), type=str.upper)
+             'Output format: SQLITE, TSV_ALL, JSON, LOG_DEFAULT  (Default is LOG_DEFAULT)'), type=str.upper)
 
     arg_parser.add_argument('-l', '--log_level', help='Log levels: INFO, DEBUG, WARNING, ERROR (Default is INFO)')
     arg_parser.add_argument('-t', '--localtime', help='mimic OSX behaviour using localtime to ease comparison with diffing tool',
@@ -382,6 +474,11 @@ def Main():
     if args.output_format == 'SQLITE':
         database_path = os.path.join(output_path, 'unifiedlogs.sqlite')
         output_writer = SQLiteDatabaseOutputWriter(database_path)
+
+    elif args.output_format == 'JSON':
+        file_path = os.path.join(output_path, 'logs.json')
+        output_writer = JsonOutputWriter(
+            file_path, localtime=args.localtime)
 
     elif args.output_format in ('TSV_ALL', 'LOG_DEFAULT'):
         file_path = os.path.join(output_path, 'logs.txt')
